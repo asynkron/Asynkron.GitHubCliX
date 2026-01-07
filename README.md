@@ -31,9 +31,9 @@ Command: ghx issue tree
 
 ![ghx issue tree](assets/images/ghx-issue-tree.png)
 
-Command: ghx issue tree --open --closed
+Command: ghx issue tree --open --closed --root 399
 
-![ghx issue tree --open --closed](assets/images/ghx-issue-tree-open-closed.png)
+![ghx issue tree --open --closed --root 399](assets/images/ghx-issue-tree-open-closed.png)
 
 Command: ghx issue tree -root 399
 
