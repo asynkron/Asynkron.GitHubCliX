@@ -84,19 +84,21 @@ func renderTree(roots []*Node) {
 }
 
 const (
-	colorBranch   = "#5C6370" // One Dark comment gray
-	colorOpenID   = "#98C379" // One Dark green
-	colorClosedID = "#C678DD" // One Dark purple
-	colorTitle    = "#ABB2BF" // One Dark light gray
-	colorBugDot   = "#E06C75" // One Dark red
+	colorBranch      = "#5C6370" // One Dark comment gray
+	colorOpenID      = "#98C379" // One Dark green
+	colorClosedID    = "#C678DD" // One Dark purple
+	colorTitlePrefix = "#D19A66" // One Dark orange
+	colorTitleSuffix = "#ABB2BF" // One Dark light gray
+	colorBugDot      = "#E06C75" // One Dark red
 )
 
 var (
-	branchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBranch))
-	openIDStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorOpenID))
-	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorClosedID))
-	titleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitle))
-	bugDot        = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBugDot)).Render("●")
+	branchStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBranch))
+	openIDStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorOpenID))
+	closedIDStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorClosedID))
+	prefixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitlePrefix))
+	suffixStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitleSuffix))
+	bugDot         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBugDot)).Render("●")
 )
 
 func renderNode(n *Node, prefix string, isLast bool) {
@@ -110,9 +112,18 @@ func renderNode(n *Node, prefix string, isLast bool) {
 	s := n.Issue.State
 	if len(s) > 0 && (s[0] == 'c' || s[0] == 'C') { idStyle = closedIDStyle }
 	bug := isBug(n.Issue)
-	prefixTitle := titleStyle.Render(n.Issue.Title)
-	if bug { prefixTitle = bugDot + " " + prefixTitle }
-	fmt.Println(branchStyle.Render(prefix+connector) + " " + idStyle.Render(fmt.Sprintf("#%d", n.Issue.Number)) + " " + prefixTitle)
+	full := n.Issue.Title
+	colon := indexOf(full, ":")
+	var rendered string
+	if colon > 0 {
+		pre := prefixStyle.Render(full[:colon])
+		suf := suffixStyle.Render(full[colon+1:])
+		rendered = pre + ":" + suf
+	} else {
+		rendered = suffixStyle.Render(full)
+	}
+	if bug { rendered = bugDot + " " + rendered }
+	fmt.Println(branchStyle.Render(prefix+connector) + " " + idStyle.Render(fmt.Sprintf("#%d", n.Issue.Number)) + " " + rendered)
 	sort.Slice(n.Children, func(i, j int) bool { return n.Children[i].Issue.Number < n.Children[j].Issue.Number })
 	for i, c := range n.Children {
 		renderNode(c, nextPrefix, i == len(n.Children)-1)
