@@ -112,8 +112,8 @@ func renderNode(n *Node, prefix string, isLast bool) {
 	s := n.Issue.State
 	closed := len(s) > 0 && (s[0] == 'c' || s[0] == 'C')
 	if closed { idStyle = closedIDStyle }
-	stateBox := "[ ]"
-	if closed { stateBox = "[x]" }
+	stateBox := "○"
+	if closed { stateBox = "●" }
 	bug := isBug(n.Issue)
 	full := n.Issue.Title
 	colon := indexOf(full, ":")
