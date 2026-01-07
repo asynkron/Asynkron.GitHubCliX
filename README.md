@@ -21,7 +21,8 @@ Usage
 - `ghx issue tree --link` (show issue URLs)
 
 Notes
-- Parent relationship parsed from issue body line: `Parent: #<number>`
+- Parent relationship from GitHub's native sub-issue feature
+- Fallback: parses `Parent: #<number>` or `Parent issue: #<number>` from issue body
 
 Updated: 2026-01-07T10:53:41.763Z
 

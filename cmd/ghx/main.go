@@ -16,13 +16,18 @@ type Label struct {
 	Color string `json:"color"`
 }
 
+type ParentRef struct {
+	Number int `json:"number"`
+}
+
 type Issue struct {
-	Number int     `json:"number"`
-	Title  string  `json:"title"`
-	Body   string  `json:"body"`
-	URL    string  `json:"url"`
-	State  string  `json:"state"`
-	Labels []Label `json:"labels"`
+	Number int        `json:"number"`
+	Title  string     `json:"title"`
+	Body   string     `json:"body"`
+	URL    string     `json:"url"`
+	State  string     `json:"state"`
+	Labels []Label    `json:"labels"`
+	Parent *ParentRef `json:"parent"`
 }
 
 type Node struct {
@@ -32,11 +37,11 @@ type Node struct {
 }
 
 func parseParent(body string) int {
-	re := regexp.MustCompile(`(?i)^Parent:\s*#?(\d+)`)
+	re := regexp.MustCompile(`(?i)^Parent(\s+issue)?:\s*#?(\d+)`)
 	for _, line := range regexp.MustCompile("\r?\n").Split(body, -1) {
 		m := re.FindStringSubmatch(line)
-		if len(m) == 2 {
-			return atoi(m[1])
+		if len(m) == 3 {
+			return atoi(m[2])
 		}
 	}
 	return 0
@@ -150,7 +155,7 @@ func renderSection(header string, nodes []*Node, width int, showLink bool, maxWi
 }
 
 func calcNodeWidth(n *Node, prefix string, idWidth int, isRoot bool) int {
-	connector := "├── "
+	connector := "├─ "
 	if isRoot {
 		connector = ""
 	}
@@ -167,9 +172,9 @@ func calcMaxWidth(nodes []*Node, prefix string, idWidth int, isRoot bool) int {
 		if w > max {
 			max = w
 		}
-		nextPrefix := "    "
+		nextPrefix := "   "
 		if !isRoot {
-			nextPrefix = prefix + "│   "
+			nextPrefix = prefix + "│  "
 		}
 		if childMax := calcMaxWidth(n.Children, nextPrefix, idWidth, false); childMax > max {
 			max = childMax
@@ -236,15 +241,15 @@ func renderSpecialLabels(issue Issue) string {
 }
 
 func renderNode(n *Node, prefix string, isLast bool, width int, showLink bool, maxWidth int, isRoot bool) {
-	connector := "├── "
-	nextPrefix := prefix + "│   "
+	connector := "├─ "
+	nextPrefix := prefix + "│  "
 	if isLast {
-		connector = "└── "
-		nextPrefix = prefix + "    "
+		connector = "└─ "
+		nextPrefix = prefix + "   "
 	}
 	if isRoot {
 		connector = ""
-		nextPrefix = "    "
+		nextPrefix = "   "
 	}
 	idStyle := openIDStyle
 	s := n.Issue.State
@@ -313,24 +318,129 @@ func runIssueTree(args []string) int {
 	} else if hasOpen {
 		state = "open"
 	}
-	cmd := exec.Command("gh", "issue", "list", "--state", state, "--limit", "1000", "--json", "number,title,body,url,state,labels")
-	cmd.Stdin = os.Stdin
-	out, err := cmd.Output()
+	// Get repo info
+	repoCmd := exec.Command("gh", "repo", "view", "--json", "owner,name")
+	repoOut, err := repoCmd.Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ghx: failed to list issues: %v\n", err)
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		return 127
-	}
-	var issues []Issue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		fmt.Fprintf(os.Stderr, "ghx: failed to parse issues json: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ghx: failed to get repo info: %v\n", err)
 		return 1
 	}
+	var repoInfo struct {
+		Owner struct{ Login string } `json:"owner"`
+		Name  string                 `json:"name"`
+	}
+	if err := json.Unmarshal(repoOut, &repoInfo); err != nil {
+		fmt.Fprintf(os.Stderr, "ghx: failed to parse repo info: %v\n", err)
+		return 1
+	}
+	owner := repoInfo.Owner.Login
+	repo := repoInfo.Name
+
+	// Build state filters to query
+	var stateFilters []string
+	if state == "all" {
+		stateFilters = []string{"OPEN", "CLOSED"}
+	} else if state == "closed" {
+		stateFilters = []string{"CLOSED"}
+	} else {
+		stateFilters = []string{"OPEN"}
+	}
+
+	// GraphQL query to fetch issues with parent relationship
+	query := `query($owner: String!, $repo: String!, $state: IssueState!, $cursor: String) {
+		repository(owner: $owner, name: $repo) {
+			issues(first: 100, after: $cursor, states: [$state]) {
+				pageInfo { hasNextPage endCursor }
+				nodes {
+					number
+					title
+					body
+					url
+					state
+					labels(first: 10) { nodes { name color } }
+					parent { number }
+				}
+			}
+		}
+	}`
+
+	var allIssues []Issue
+	for _, stateFilter := range stateFilters {
+		var cursor *string
+		for {
+			args := []string{"api", "graphql", "-f", "query=" + query, "-f", "owner=" + owner, "-f", "repo=" + repo, "-f", "state=" + stateFilter}
+			if cursor != nil {
+				args = append(args, "-f", "cursor="+*cursor)
+			}
+			cmd := exec.Command("gh", args...)
+			cmd.Stdin = os.Stdin
+			out, err := cmd.Output()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ghx: failed to query issues: %v\n", err)
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					return exitErr.ExitCode()
+				}
+				return 127
+			}
+
+			var resp struct {
+				Data struct {
+					Repository struct {
+						Issues struct {
+							PageInfo struct {
+								HasNextPage bool   `json:"hasNextPage"`
+								EndCursor   string `json:"endCursor"`
+							} `json:"pageInfo"`
+							Nodes []struct {
+								Number int    `json:"number"`
+								Title  string `json:"title"`
+								Body   string `json:"body"`
+								URL    string `json:"url"`
+								State  string `json:"state"`
+								Labels struct {
+									Nodes []Label `json:"nodes"`
+								} `json:"labels"`
+								Parent *ParentRef `json:"parent"`
+							} `json:"nodes"`
+						} `json:"issues"`
+					} `json:"repository"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(out, &resp); err != nil {
+				fmt.Fprintf(os.Stderr, "ghx: failed to parse issues json: %v\n", err)
+				return 1
+			}
+
+			for _, n := range resp.Data.Repository.Issues.Nodes {
+				allIssues = append(allIssues, Issue{
+					Number: n.Number,
+					Title:  n.Title,
+					Body:   n.Body,
+					URL:    n.URL,
+					State:  n.State,
+					Labels: n.Labels.Nodes,
+					Parent: n.Parent,
+				})
+			}
+
+			if !resp.Data.Repository.Issues.PageInfo.HasNextPage {
+				break
+			}
+			c := resp.Data.Repository.Issues.PageInfo.EndCursor
+			cursor = &c
+		}
+	}
+
 	nodes := make(map[int]*Node)
-	for _, is := range issues {
-		n := &Node{Issue: is, Parent: parseParent(is.Body)}
+	for _, is := range allIssues {
+		parentNum := 0
+		if is.Parent != nil {
+			parentNum = is.Parent.Number
+		}
+		if parentNum == 0 {
+			parentNum = parseParent(is.Body) // fallback to body parsing
+		}
+		n := &Node{Issue: is, Parent: parentNum}
 		nodes[is.Number] = n
 	}
 	var roots []*Node
