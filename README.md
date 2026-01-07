@@ -20,4 +20,4 @@ Usage
 Notes
 - Parent relationship parsed from issue body line: `Parent: #<number>`
 
-Updated: 2026-01-07T10:33:09.615Z
+Updated: 2026-01-07T10:38:31.940Z
