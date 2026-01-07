@@ -112,8 +112,8 @@ func renderNode(n *Node, prefix string, isLast bool) {
 	s := n.Issue.State
 	closed := len(s) > 0 && (s[0] == 'c' || s[0] == 'C')
 	if closed { idStyle = closedIDStyle }
-	stateBox := "○"
-	if closed { stateBox = "●" }
+	stateDot := "○"
+	if closed { stateDot = "●" }
 	bug := isBug(n.Issue)
 	full := n.Issue.Title
 	colon := indexOf(full, ":")
@@ -126,7 +126,7 @@ func renderNode(n *Node, prefix string, isLast bool) {
 		rendered = suffixStyle.Render(full)
 	}
 	if bug { rendered = bugDot + " " + rendered }
-	fmt.Println(branchStyle.Render(prefix+connector) + " " + stateBox + " " + idStyle.Render(fmt.Sprintf("#%d", n.Issue.Number)) + " " + rendered)
+	fmt.Println(branchStyle.Render(prefix+connector) + " " + idStyle.Render(fmt.Sprintf("%s%d", stateDot, n.Issue.Number)) + " " + rendered)
 	sort.Slice(n.Children, func(i, j int) bool { return n.Children[i].Issue.Number < n.Children[j].Issue.Number })
 	for i, c := range n.Children {
 		renderNode(c, nextPrefix, i == len(n.Children)-1)
