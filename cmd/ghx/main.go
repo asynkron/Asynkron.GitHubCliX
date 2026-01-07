@@ -83,12 +83,20 @@ func renderTree(roots []*Node) {
 	}
 }
 
+const (
+	colorBranch   = "#5C6370" // One Dark comment gray
+	colorOpenID   = "#98C379" // One Dark green
+	colorClosedID = "#C678DD" // One Dark purple
+	colorTitle    = "#ABB2BF" // One Dark light gray
+	colorBugDot   = "#E06C75" // One Dark red
+)
+
 var (
-	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // gray
-	openIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46")) // green
-	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")) // purple/magenta
-	titleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("254")) // light gray
-	bugDot      = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("●") // red dot
+	branchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBranch))
+	openIDStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorOpenID))
+	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorClosedID))
+	titleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitle))
+	bugDot        = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBugDot)).Render("●")
 )
 
 func renderNode(n *Node, prefix string, isLast bool) {
