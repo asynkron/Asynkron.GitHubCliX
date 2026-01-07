@@ -1,4 +1,5 @@
 # Asynkron.GitHubCliX
+[![CI](https://github.com/asynkron/Asynkron.GitHubCliX/actions/workflows/ci.yml/badge.svg)](https://github.com/asynkron/Asynkron.GitHubCliX/actions/workflows/ci.yml)
 
 A thin wrapper around GitHub CLI (`gh`) with extra visualizations.
 
