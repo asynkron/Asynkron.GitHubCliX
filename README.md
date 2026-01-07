@@ -250,3 +250,21 @@ Command: ghx issue tree -root "AST delegation"
     └── ○ 410 Task 1.7: IR support for yield in binding target defaults
 ```
 
+
+## Screenshots (2026-01-07T11:22:45.219Z)
+
+Command: ghx issue tree
+
+![ghx issue tree](assets/images/ghx-issue-tree.png)
+
+Command: ghx issue tree --open --closed
+
+![ghx issue tree --open --closed](assets/images/ghx-issue-tree-open-closed.png)
+
+Command: ghx issue tree -root 399
+
+![ghx issue tree -root 399](assets/images/ghx-issue-tree-root-399.png)
+
+Command: ghx issue tree -root "AST delegation"
+
+![ghx issue tree -root AST delegation](assets/images/ghx-issue-tree-root-ast-delegation.png)
