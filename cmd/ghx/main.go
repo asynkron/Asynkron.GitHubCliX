@@ -17,6 +17,7 @@ type Issue struct {
 	Body   string `json:"body"`
 	URL    string `json:"url"`
 	State  string `json:"state"`
+	Labels []struct{ Name string `json:"name"` } `json:"labels"`
 }
 
 type Node struct {
@@ -65,6 +66,16 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
+func isBug(is Issue) bool {
+	// label named "bug" (case-insensitive) OR title starts with "Bug:" or "Bug " (case-insensitive)
+	lower := func(s string) string { b := make([]byte, len(s)); for i:=0;i<len(s);i++{c:=s[i]; if c>='A'&&c<='Z'{b[i]=c+32}else{b[i]=c}}; return string(b) }
+	for _, l := range is.Labels {
+		if lower(l.Name) == "bug" { return true }
+	}
+	lt := lower(is.Title)
+	return indexOf(lt, "bug:") == 0 || indexOf(lt, "bug ") == 0
+}
+
 func renderTree(roots []*Node) {
 	sort.Slice(roots, func(i, j int) bool { return roots[i].Issue.Number < roots[j].Issue.Number })
 	for i, r := range roots {
@@ -77,6 +88,7 @@ var (
 	openIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("46")) // green
 	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")) // purple/magenta
 	titleStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("254")) // light gray
+	bugDot      = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("●") // red dot
 )
 
 func renderNode(n *Node, prefix string, isLast bool) {
@@ -89,7 +101,10 @@ func renderNode(n *Node, prefix string, isLast bool) {
 	idStyle := openIDStyle
 	s := n.Issue.State
 	if len(s) > 0 && (s[0] == 'c' || s[0] == 'C') { idStyle = closedIDStyle }
-	fmt.Println(branchStyle.Render(prefix+connector) + " " + idStyle.Render(fmt.Sprintf("#%d", n.Issue.Number)) + " " + titleStyle.Render(n.Issue.Title))
+	bug := isBug(n.Issue)
+	prefixTitle := titleStyle.Render(n.Issue.Title)
+	if bug { prefixTitle = bugDot + " " + prefixTitle }
+	fmt.Println(branchStyle.Render(prefix+connector) + " " + idStyle.Render(fmt.Sprintf("#%d", n.Issue.Number)) + " " + prefixTitle)
 	sort.Slice(n.Children, func(i, j int) bool { return n.Children[i].Issue.Number < n.Children[j].Issue.Number })
 	for i, c := range n.Children {
 		renderNode(c, nextPrefix, i == len(n.Children)-1)
@@ -126,7 +141,7 @@ func runIssueTree(args []string) int {
 	} else if hasOpen {
 		state = "open"
 	}
-	cmd := exec.Command("gh", "issue", "list", "--state", state, "--limit", "1000", "--json", "number,title,body,url,state")
+	cmd := exec.Command("gh", "issue", "list", "--state", state, "--limit", "1000", "--json", "number,title,body,url,state,labels")
 	cmd.Stdin = os.Stdin
 	out, err := cmd.Output()
 	if err != nil {
