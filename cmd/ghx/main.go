@@ -87,7 +87,7 @@ const (
 	colorBranch      = "#5C6370" // One Dark comment gray
 	colorOpenID      = "#98C379" // One Dark green
 	colorClosedID    = "#C678DD" // One Dark purple
-	colorTitlePrefix = "#D19A66" // One Dark orange
+	colorTitlePrefix = "#61AFEF" // One Dark blue
 	colorTitleSuffix = "#ABB2BF" // One Dark light gray
 	colorBugDot      = "#E06C75" // One Dark red
 )
