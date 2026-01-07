@@ -33,12 +33,4 @@ Command: ghx issue tree
 
 Command: ghx issue tree --open --closed --root 399
 
-![ghx issue tree --open --closed --root 399](assets/images/ghx-issue-tree-open-closed.png)
-
-Command: ghx issue tree -root 399
-
-![ghx issue tree -root 399](assets/images/ghx-issue-tree-root-399.png)
-
-Command: ghx issue tree -root "AST delegation"
-
-![ghx issue tree -root AST delegation](assets/images/ghx-issue-tree-root-ast-delegation.png)
+![ghx issue tree --open --closed --root 399](assets/images/ghx-issue-tree-root-399.png)
