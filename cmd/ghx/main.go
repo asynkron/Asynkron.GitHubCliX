@@ -484,10 +484,32 @@ func runIssueTree(args []string) int {
 	return 0
 }
 
+func printIssueHelp() {
+	fmt.Println("Work with GHX issues.")
+	fmt.Println()
+	fmt.Println("USAGE")
+	fmt.Println("  ghx issue <command> [flags]")
+	fmt.Println()
+	fmt.Println("GHX COMMANDS")
+	fmt.Println("  tree:        List issues in tree format")
+	fmt.Println()
+	fmt.Println("-----")
+	fmt.Println()
+}
+
 func main() {
 	args := os.Args[1:]
 	if len(args) >= 2 && args[0] == "issue" && args[1] == "tree" {
 		os.Exit(runIssueTree(args[2:]))
+	}
+	// Show GHX help before gh help for issue command
+	if len(args) >= 1 && args[0] == "issue" {
+		for _, a := range args[1:] {
+			if a == "--help" || a == "-h" || a == "help" {
+				printIssueHelp()
+				break
+			}
+		}
 	}
 	cmd := exec.Command("gh", args...)
 	cmd.Stdout = os.Stdout
