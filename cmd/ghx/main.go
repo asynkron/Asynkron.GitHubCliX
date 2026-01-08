@@ -504,11 +504,15 @@ func main() {
 	}
 	// Show GHX help before gh help for issue command
 	if len(args) >= 1 && args[0] == "issue" {
+		showHelp := len(args) == 1 // no subcommand means help will be shown
 		for _, a := range args[1:] {
 			if a == "--help" || a == "-h" || a == "help" {
-				printIssueHelp()
+				showHelp = true
 				break
 			}
+		}
+		if showHelp {
+			printIssueHelp()
 		}
 	}
 	cmd := exec.Command("gh", args...)
