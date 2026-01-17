@@ -194,7 +194,7 @@ func printBoardHelp() {
 	fmt.Println("Open a full-screen Kanban board for GitHub issues.")
 	fmt.Println()
 	fmt.Println("USAGE")
-	fmt.Println("  ghx board [--state|-state <open|closed|all>] [--limit|-limit <n>]")
+	fmt.Println("  ghx board [--state, -state <open|closed|all>] [--limit, -limit <n>]")
 	fmt.Println()
 	fmt.Println("KEYS")
 	fmt.Println("  arrows:  move cursor")

@@ -614,14 +614,14 @@ func runIssueLink(args []string) int {
 	}
 
 	if targetNum == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent|-parent <parent-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child|-child <child-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink|-unlink")
+		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent, -parent <parent-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child, -child <child-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink, -unlink")
 		return 1
 	}
 
 	if !unlink && parentNum == 0 && childNum == 0 {
-		fmt.Fprintln(os.Stderr, "Error: must specify --parent|-parent, --child|-child, or --unlink|-unlink")
+		fmt.Fprintln(os.Stderr, "Error: must specify --parent, -parent, --child, -child, or --unlink, -unlink")
 		return 1
 	}
 
