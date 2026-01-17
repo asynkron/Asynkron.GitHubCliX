@@ -16,10 +16,11 @@ import (
 )
 
 type boardLane struct {
-	Name   string
-	Label  string
-	Color  string
-	Issues []*Issue
+	Name          string
+	Label         string
+	Color         string                   // Hex color for GitHub labels (without #)
+	DisplayColor  lipgloss.AdaptiveColor   // Adaptive color for UI display
+	Issues        []*Issue
 }
 
 type boardLayout struct {
@@ -133,10 +134,10 @@ var (
 
 func defaultBoardLanes() []boardLane {
 	return []boardLane{
-		{Name: "TODO", Label: "TODO", Color: stripHash(theme.AccentBlue.Dark)},
-		{Name: "Doing", Label: "Doing", Color: stripHash(theme.AccentYellow.Dark)},
-		{Name: "Done", Label: "Done", Color: stripHash(theme.AccentGreen.Dark)},
-		{Name: "Blocked", Label: "Blocked", Color: stripHash(theme.AccentRed.Dark)},
+		{Name: "TODO", Label: "TODO", Color: stripHash(theme.AccentBlue.Dark), DisplayColor: theme.AccentBlue},
+		{Name: "Doing", Label: "Doing", Color: stripHash(theme.AccentYellow.Dark), DisplayColor: theme.AccentYellow},
+		{Name: "Done", Label: "Done", Color: stripHash(theme.AccentGreen.Dark), DisplayColor: theme.AccentGreen},
+		{Name: "Blocked", Label: "Blocked", Color: stripHash(theme.AccentRed.Dark), DisplayColor: theme.AccentRed},
 	}
 }
 
@@ -970,7 +971,7 @@ func laneHeaderStyle(lane boardLane, active bool, width int) string {
 	name = truncateString(name, contentWidth)
 	style := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#" + lane.Color)).
+		Foreground(lane.DisplayColor).
 		Width(width)
 	if active {
 		style = style.Underline(true)
