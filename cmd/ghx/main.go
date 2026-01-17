@@ -65,13 +65,20 @@ func contains(haystack, needle string) bool {
 
 func indexOf(s, sub string) int {
 	// naive search to avoid importing strings
-	if len(sub) == 0 { return 0 }
+	if len(sub) == 0 {
+		return 0
+	}
 	for i := 0; i+len(sub) <= len(s); i++ {
 		match := true
 		for j := 0; j < len(sub); j++ {
-			if s[i+j] != sub[j] { match = false; break }
+			if s[i+j] != sub[j] {
+				match = false
+				break
+			}
 		}
-		if match { return i }
+		if match {
+			return i
+		}
 	}
 	return -1
 }
@@ -92,7 +99,9 @@ func lower(s string) string {
 func isBug(is Issue) bool {
 	// label named "bug" (case-insensitive) OR title starts with "Bug:" or "Bug " (case-insensitive)
 	for _, l := range is.Labels {
-		if lower(l.Name) == "bug" { return true }
+		if lower(l.Name) == "bug" {
+			return true
+		}
 	}
 	lt := lower(is.Title)
 	return indexOf(lt, "bug:") == 0 || indexOf(lt, "bug ") == 0
@@ -101,7 +110,9 @@ func isBug(is Issue) bool {
 func isBlocked(is Issue) bool {
 	// label named "blocked" (case-insensitive) OR title starts with "Blocked:" or "Blocked " (case-insensitive)
 	for _, l := range is.Labels {
-		if lower(l.Name) == "blocked" { return true }
+		if lower(l.Name) == "blocked" {
+			return true
+		}
 	}
 	lt := lower(is.Title)
 	return indexOf(lt, "blocked:") == 0 || indexOf(lt, "blocked ") == 0
@@ -254,9 +265,13 @@ func renderNode(n *Node, prefix string, isLast bool, width int, showLink bool, m
 	idStyle := openIDStyle
 	s := n.Issue.State
 	closed := len(s) > 0 && (s[0] == 'c' || s[0] == 'C')
-	if closed { idStyle = closedIDStyle }
+	if closed {
+		idStyle = closedIDStyle
+	}
 	stateDot := "○"
-	if closed { stateDot = "●" }
+	if closed {
+		stateDot = "●"
+	}
 	full := n.Issue.Title
 	colon := indexOf(full, ":")
 	var rendered string
@@ -294,13 +309,24 @@ func runIssueTree(args []string) int {
 	var rootNum int
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--open" { hasOpen = true; continue }
-		if a == "--closed" { hasClosed = true; continue }
-		if a == "--link" { showLink = true; continue }
+		if a == "--open" {
+			hasOpen = true
+			continue
+		}
+		if a == "--closed" {
+			hasClosed = true
+			continue
+		}
+		if a == "--link" {
+			showLink = true
+			continue
+		}
 		if a == "--root" || a == "-root" {
 			if i+1 < len(args) {
 				val := args[i+1]
-				if len(val) > 0 && val[0] == '#' { val = val[1:] }
+				if len(val) > 0 && val[0] == '#' {
+					val = val[1:]
+				}
 				if n := atoi(val); n > 0 {
 					rootNum = n
 				} else {
@@ -484,23 +510,352 @@ func runIssueTree(args []string) int {
 	return 0
 }
 
+func getIssueNodeID(num int) (string, error) {
+	cmd := exec.Command("gh", "issue", "view", fmt.Sprintf("%d", num), "--json", "id", "--jq", ".id")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	// Trim whitespace/newlines
+	id := string(out)
+	for len(id) > 0 && (id[len(id)-1] == '\n' || id[len(id)-1] == '\r' || id[len(id)-1] == ' ') {
+		id = id[:len(id)-1]
+	}
+	return id, nil
+}
+
+func getIssueParentID(num int) (string, error) {
+	query := `query($num: Int!) {
+		repository(owner: "%s", name: "%s") {
+			issue(number: $num) {
+				parent { id }
+			}
+		}
+	}`
+	// Get repo info first
+	repoCmd := exec.Command("gh", "repo", "view", "--json", "owner,name")
+	repoOut, err := repoCmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var repoInfo struct {
+		Owner struct{ Login string } `json:"owner"`
+		Name  string                 `json:"name"`
+	}
+	if err := json.Unmarshal(repoOut, &repoInfo); err != nil {
+		return "", err
+	}
+	query = fmt.Sprintf(query, repoInfo.Owner.Login, repoInfo.Name)
+	cmd := exec.Command("gh", "api", "graphql",
+		"-H", "GraphQL-Features: sub_issues",
+		"-f", "query="+query,
+		"-F", fmt.Sprintf("num=%d", num))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Data struct {
+			Repository struct {
+				Issue struct {
+					Parent *struct {
+						ID string `json:"id"`
+					} `json:"parent"`
+				} `json:"issue"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", err
+	}
+	if resp.Data.Repository.Issue.Parent == nil {
+		return "", nil
+	}
+	return resp.Data.Repository.Issue.Parent.ID, nil
+}
+
+func runIssueLink(args []string) int {
+	var targetNum, parentNum, childNum int
+	var unlink bool
+
+	// Parse args: <issue> [--parent <num>] [--child <num>] [--unlink]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--parent" && i+1 < len(args) {
+			val := args[i+1]
+			if len(val) > 0 && val[0] == '#' {
+				val = val[1:]
+			}
+			parentNum = atoi(val)
+			i++
+			continue
+		}
+		if a == "--child" && i+1 < len(args) {
+			val := args[i+1]
+			if len(val) > 0 && val[0] == '#' {
+				val = val[1:]
+			}
+			childNum = atoi(val)
+			i++
+			continue
+		}
+		if a == "--unlink" {
+			unlink = true
+			continue
+		}
+		// First positional arg is the target issue
+		if targetNum == 0 {
+			val := a
+			if len(val) > 0 && val[0] == '#' {
+				val = val[1:]
+			}
+			targetNum = atoi(val)
+		}
+	}
+
+	if targetNum == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent <parent-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child <child-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink")
+		return 1
+	}
+
+	if !unlink && parentNum == 0 && childNum == 0 {
+		fmt.Fprintln(os.Stderr, "Error: must specify --parent, --child, or --unlink")
+		return 1
+	}
+
+	// Get node IDs
+	targetID, err := getIssueNodeID(targetNum)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ghx: failed to get issue #%d: %v\n", targetNum, err)
+		return 1
+	}
+
+	if unlink {
+		// Get current parent ID
+		parentID, err := getIssueParentID(targetNum)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to get parent of #%d: %v\n", targetNum, err)
+			return 1
+		}
+		if parentID == "" {
+			fmt.Printf("Issue #%d has no parent.\n", targetNum)
+			return 0
+		}
+		// Remove sub-issue
+		mutation := fmt.Sprintf(`mutation {
+			removeSubIssue(input: {issueId: "%s", subIssueId: "%s"}) {
+				issue { number title }
+				subIssue { number title }
+			}
+		}`, parentID, targetID)
+		cmd := exec.Command("gh", "api", "graphql",
+			"-H", "GraphQL-Features: sub_issues",
+			"-f", "query="+mutation)
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to unlink issue: %v\n", err)
+			return 1
+		}
+		var resp struct {
+			Data struct {
+				RemoveSubIssue struct {
+					Issue struct {
+						Number int
+						Title  string
+					} `json:"issue"`
+					SubIssue struct {
+						Number int
+						Title  string
+					} `json:"subIssue"`
+				} `json:"removeSubIssue"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to parse response: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Unlinked #%d from parent #%d\n",
+			resp.Data.RemoveSubIssue.SubIssue.Number,
+			resp.Data.RemoveSubIssue.Issue.Number)
+		return 0
+	}
+
+	if parentNum > 0 {
+		// Set target's parent
+		parentID, err := getIssueNodeID(parentNum)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to get issue #%d: %v\n", parentNum, err)
+			return 1
+		}
+		mutation := fmt.Sprintf(`mutation {
+			addSubIssue(input: {issueId: "%s", subIssueId: "%s"}) {
+				issue { number title }
+				subIssue { number title }
+			}
+		}`, parentID, targetID)
+		cmd := exec.Command("gh", "api", "graphql",
+			"-H", "GraphQL-Features: sub_issues",
+			"-f", "query="+mutation)
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to link issue: %v\n", err)
+			return 1
+		}
+		var resp struct {
+			Data struct {
+				AddSubIssue struct {
+					Issue struct {
+						Number int
+						Title  string
+					} `json:"issue"`
+					SubIssue struct {
+						Number int
+						Title  string
+					} `json:"subIssue"`
+				} `json:"addSubIssue"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to parse response: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Linked #%d as child of #%d\n",
+			resp.Data.AddSubIssue.SubIssue.Number,
+			resp.Data.AddSubIssue.Issue.Number)
+		return 0
+	}
+
+	if childNum > 0 {
+		// Add child to target (target becomes parent)
+		childID, err := getIssueNodeID(childNum)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to get issue #%d: %v\n", childNum, err)
+			return 1
+		}
+		mutation := fmt.Sprintf(`mutation {
+			addSubIssue(input: {issueId: "%s", subIssueId: "%s"}) {
+				issue { number title }
+				subIssue { number title }
+			}
+		}`, targetID, childID)
+		cmd := exec.Command("gh", "api", "graphql",
+			"-H", "GraphQL-Features: sub_issues",
+			"-f", "query="+mutation)
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to link issue: %v\n", err)
+			return 1
+		}
+		var resp struct {
+			Data struct {
+				AddSubIssue struct {
+					Issue struct {
+						Number int
+						Title  string
+					} `json:"issue"`
+					SubIssue struct {
+						Number int
+						Title  string
+					} `json:"subIssue"`
+				} `json:"addSubIssue"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(out, &resp); err != nil {
+			fmt.Fprintf(os.Stderr, "ghx: failed to parse response: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Linked #%d as child of #%d\n",
+			resp.Data.AddSubIssue.SubIssue.Number,
+			resp.Data.AddSubIssue.Issue.Number)
+		return 0
+	}
+
+	return 0
+}
+
 func printIssueHelp() {
 	fmt.Println("Work with GHX issues.")
 	fmt.Println()
 	fmt.Println("USAGE")
 	fmt.Println("  ghx issue <command> [flags]")
+	fmt.Println("  ghx \"<title>: <body>\"        Create an issue from a string")
 	fmt.Println()
 	fmt.Println("GHX COMMANDS")
+	fmt.Println("  link:        Set parent/child relationship between issues")
 	fmt.Println("  tree:        List issues in tree format")
+	fmt.Println()
+	fmt.Println("EXAMPLES")
+	fmt.Println("  ghx \"Bug: Fix login form validation\"")
+	fmt.Println("  ghx \"Feature: Add dark mode support\"")
 	fmt.Println()
 	fmt.Println("-----")
 	fmt.Println()
 }
 
+func createIssueFromString(issueStr string) int {
+	// Split on first colon
+	colonIdx := indexOf(issueStr, ":")
+	if colonIdx < 0 {
+		fmt.Fprintf(os.Stderr, "ghx: issue string must contain ':' separator (format: 'title: body')\n")
+		return 1
+	}
+
+	title := issueStr[:colonIdx]
+	body := issueStr[colonIdx+1:]
+
+	// Trim leading/trailing whitespace from body
+	for len(body) > 0 && (body[0] == ' ' || body[0] == '\t' || body[0] == '\n' || body[0] == '\r') {
+		body = body[1:]
+	}
+	for len(body) > 0 && (body[len(body)-1] == ' ' || body[len(body)-1] == '\t' || body[len(body)-1] == '\n' || body[len(body)-1] == '\r') {
+		body = body[:len(body)-1]
+	}
+
+	// Create issue using gh CLI
+	args := []string{"issue", "create", "--title", title}
+	if len(body) > 0 {
+		args = append(args, "--body", body)
+	}
+
+	cmd := exec.Command("gh", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "ghx: failed to create issue: %v\n", err)
+		return 127
+	}
+	return 0
+}
+
 func main() {
 	args := os.Args[1:]
+
+	// If first arg contains ":" and is not a known subcommand, treat it as issue creation
+	if len(args) == 1 && indexOf(args[0], ":") >= 0 {
+		// Check if it looks like a command flag or known pattern
+		firstArg := args[0]
+		if len(firstArg) > 0 && firstArg[0] != '-' && indexOf(firstArg, ":") < len(firstArg)-1 {
+			os.Exit(createIssueFromString(firstArg))
+		}
+	}
+
+	if len(args) >= 1 && args[0] == "board" {
+		os.Exit(runBoard(args[1:]))
+	}
 	if len(args) >= 2 && args[0] == "issue" && args[1] == "tree" {
 		os.Exit(runIssueTree(args[2:]))
+	}
+	if len(args) >= 2 && args[0] == "issue" && args[1] == "link" {
+		os.Exit(runIssueLink(args[2:]))
 	}
 	// Show GHX help before gh help for issue command
 	if len(args) >= 1 && args[0] == "issue" {
