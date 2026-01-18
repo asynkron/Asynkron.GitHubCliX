@@ -14,6 +14,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var (
+	availableAgents = []string{"copilot", "claude", "codex"}
+	agentDisplayNames = []string{"Copilot", "Claude", "Codex"}
+	availableModels = []string{"standard", "advanced", "reasoning"}
+	modelDisplayNames = []string{"Standard", "Advanced", "Reasoning"}
+)
+
 type boardLane struct {
 	Name         string
 	Label        string
@@ -583,7 +590,7 @@ func (m *boardModel) updateMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.menuOpen = false
 			return m, nil
 		}
-		
+
 		switch m.menuIndex {
 		case 0:
 			// Assign to Copilot Web
@@ -615,7 +622,7 @@ func (m *boardModel) updateAgentMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.agentIndex--
 		}
 	case "down", "j":
-		if m.agentIndex < 2 { // We have 3 agents (0, 1, 2)
+		if m.agentIndex < len(availableAgents)-1 {
 			m.agentIndex++
 		}
 	case "enter":
@@ -642,7 +649,7 @@ func (m *boardModel) updateModelMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modelIndex--
 		}
 	case "down", "j":
-		if m.modelIndex < 2 { // We have 3 models (0, 1, 2)
+		if m.modelIndex < len(availableModels)-1 {
 			m.modelIndex++
 		}
 	case "enter":
@@ -651,17 +658,14 @@ func (m *boardModel) updateModelMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.modelMenuOpen = false
 			return m, nil
 		}
-		
-		agents := []string{"copilot", "claude", "codex"}
-		models := []string{"standard", "advanced", "reasoning"}
-		
-		agent := agents[m.agentIndex]
-		model := models[m.modelIndex]
-		
+
+		agent := availableAgents[m.agentIndex]
+		model := availableModels[m.modelIndex]
+
 		m.modelMenuOpen = false
 		m.busy = true
 		m.status = fmt.Sprintf("Creating worktree and assigning #%d to %s (%s)...", issue.Number, agent, model)
-		
+
 		return m, createWorktreeAndAssignCmd(m.owner, m.repo, issue.Number, agent, model)
 	}
 	return m, nil
@@ -1576,12 +1580,10 @@ func (m *boardModel) agentMenuViewString() string {
 		return ""
 	}
 
-	agents := []string{"Copilot", "Claude", "Codex"}
-
 	var menuLines []string
 	menuLines = append(menuLines, fmt.Sprintf("Select Agent - Issue #%d", issue.Number))
 	menuLines = append(menuLines, "")
-	for i, agent := range agents {
+	for i, agent := range agentDisplayNames {
 		if i == m.agentIndex {
 			menuLines = append(menuLines, "> "+agent)
 		} else {
@@ -1614,12 +1616,10 @@ func (m *boardModel) modelMenuViewString() string {
 		return ""
 	}
 
-	models := []string{"Standard", "Advanced", "Reasoning"}
-
 	var menuLines []string
 	menuLines = append(menuLines, fmt.Sprintf("Select Model - Issue #%d", issue.Number))
 	menuLines = append(menuLines, "")
-	for i, model := range models {
+	for i, model := range modelDisplayNames {
 		if i == m.modelIndex {
 			menuLines = append(menuLines, "> "+model)
 		} else {
@@ -1643,7 +1643,7 @@ func (m *boardModel) modelMenuViewString() string {
 func (m *boardModel) renderModalOverBoard(modal string) string {
 	width := m.width
 	height := m.height
-	
+
 	modalWidth := lipgloss.Width(modal)
 	modalHeight := lipgloss.Height(modal)
 	x0 := (width - modalWidth) / 2
@@ -1946,10 +1946,10 @@ func assignIssue(number int, assignee string) error {
 func createWorktreeAndAssign(owner, repo string, number int, agent, model string) error {
 	// Create branch name from issue number
 	branchName := fmt.Sprintf("issue-%d-%s", number, agent)
-	
+
 	// Create worktree in a subdirectory
 	worktreePath := fmt.Sprintf("../worktrees/%s", branchName)
-	
+
 	// Create worktree with new branch
 	cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath)
 	out, err := cmd.CombinedOutput()
@@ -1960,12 +1960,12 @@ func createWorktreeAndAssign(owner, repo string, number int, agent, model string
 		}
 		return fmt.Errorf("failed to create worktree: %v: %s", err, msg)
 	}
-	
+
 	// Assign the issue
 	if err := assignIssue(number, agent); err != nil {
 		return fmt.Errorf("worktree created but assign failed: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -2278,13 +2278,13 @@ func loadIssueDetailsCmd(number int) tea.Cmd {
 		if err := json.Unmarshal(out, &issue); err != nil {
 			return issueDetailsMsg{issue: Issue{Number: number}, err: err}
 		}
-		
+
 		// Fetch linked PRs using GraphQL
 		linkedPRs, err := fetchLinkedPRs(number)
 		if err == nil {
 			issue.LinkedPRs = linkedPRs
 		}
-		
+
 		return issueDetailsMsg{issue: issue}
 	}
 }
@@ -2311,24 +2311,24 @@ func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
 			}
 		}
 	}`, issueNumber)
-	
+
 	// Get repo info
 	owner, repo, err := getRepoInfo()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Inject owner and repo into query
 	query = strings.Replace(query, `owner: ""`, fmt.Sprintf(`owner: "%s"`, owner), 1)
 	query = strings.Replace(query, `name: ""`, fmt.Sprintf(`name: "%s"`, repo), 1)
-	
+
 	cmd := exec.Command("gh", "api", "graphql", "-f", "query="+query)
 	out, err := cmd.Output()
 	if err != nil {
 		// Return empty list on error - not critical
 		return []PullRequest{}, nil
 	}
-	
+
 	var resp struct {
 		Data struct {
 			Repository struct {
@@ -2347,11 +2347,11 @@ func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
 			} `json:"repository"`
 		} `json:"data"`
 	}
-	
+
 	if err := json.Unmarshal(out, &resp); err != nil {
 		return []PullRequest{}, nil
 	}
-	
+
 	var prs []PullRequest
 	seen := make(map[int]bool)
 	for _, node := range resp.Data.Repository.Issue.TimelineItems.Nodes {
@@ -2365,7 +2365,7 @@ func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
 			})
 		}
 	}
-	
+
 	return prs, nil
 }
 
