@@ -152,12 +152,12 @@ func runBoard(args []string) int {
 	state := "all"
 	limit := 200
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--state" && i+1 < len(args) {
+		if (args[i] == "--state" || args[i] == "-state") && i+1 < len(args) {
 			state = args[i+1]
 			i++
 			continue
 		}
-		if args[i] == "--limit" && i+1 < len(args) {
+		if (args[i] == "--limit" || args[i] == "-limit") && i+1 < len(args) {
 			limit = atoi(args[i+1])
 			i++
 			continue
@@ -195,7 +195,7 @@ func printBoardHelp() {
 	fmt.Println("Open a full-screen Kanban board for GitHub issues.")
 	fmt.Println()
 	fmt.Println("USAGE")
-	fmt.Println("  ghx board [--state <open|closed|all>] [--limit <n>]")
+	fmt.Println("  ghx board [--state, -state <open|closed|all>] [--limit, -limit <n>]")
 	fmt.Println()
 	fmt.Println("KEYS")
 	fmt.Println("  arrows:  move cursor")

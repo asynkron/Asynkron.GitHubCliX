@@ -309,15 +309,15 @@ func runIssueTree(args []string) int {
 	var rootNum int
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--open" {
+		if a == "--open" || a == "-open" {
 			hasOpen = true
 			continue
 		}
-		if a == "--closed" {
+		if a == "--closed" || a == "-closed" {
 			hasClosed = true
 			continue
 		}
-		if a == "--link" {
+		if a == "--link" || a == "-link" {
 			showLink = true
 			continue
 		}
@@ -581,7 +581,7 @@ func runIssueLink(args []string) int {
 	// Parse args: <issue> [--parent <num>] [--child <num>] [--unlink]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--parent" && i+1 < len(args) {
+		if (a == "--parent" || a == "-parent") && i+1 < len(args) {
 			val := args[i+1]
 			if len(val) > 0 && val[0] == '#' {
 				val = val[1:]
@@ -590,7 +590,7 @@ func runIssueLink(args []string) int {
 			i++
 			continue
 		}
-		if a == "--child" && i+1 < len(args) {
+		if (a == "--child" || a == "-child") && i+1 < len(args) {
 			val := args[i+1]
 			if len(val) > 0 && val[0] == '#' {
 				val = val[1:]
@@ -599,7 +599,7 @@ func runIssueLink(args []string) int {
 			i++
 			continue
 		}
-		if a == "--unlink" {
+		if a == "--unlink" || a == "-unlink" {
 			unlink = true
 			continue
 		}
@@ -614,14 +614,14 @@ func runIssueLink(args []string) int {
 	}
 
 	if targetNum == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent <parent-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child <child-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink")
+		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent, -parent <parent-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child, -child <child-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink, -unlink")
 		return 1
 	}
 
 	if !unlink && parentNum == 0 && childNum == 0 {
-		fmt.Fprintln(os.Stderr, "Error: must specify --parent, --child, or --unlink")
+		fmt.Fprintln(os.Stderr, "Error: must specify --parent, -parent, --child, -child, or --unlink, -unlink")
 		return 1
 	}
 
