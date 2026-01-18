@@ -982,37 +982,39 @@ func (m *boardModel) detailsContent(issue *Issue) string {
 	if issue == nil {
 		return "No issue selected."
 	}
-	var md strings.Builder
-	md.WriteString(fmt.Sprintf("#%d %s\n\n", issue.Number, issue.Title))
+	var header strings.Builder
+	header.WriteString(fmt.Sprintf("#%d %s\n\n", issue.Number, issue.Title))
 	if issue.State != "" {
-		md.WriteString("**State:** ")
-		md.WriteString(strings.ToLower(issue.State))
-		md.WriteString("  \n")
+		header.WriteString("State: ")
+		header.WriteString(strings.ToLower(issue.State))
+		header.WriteString("\n")
 	}
 	if issue.URL != "" {
-		md.WriteString("**URL:** ")
-		md.WriteString(issue.URL)
-		md.WriteString("  \n")
+		header.WriteString("URL: ")
+		header.WriteString(issue.URL)
+		header.WriteString("\n")
 	}
 	if len(issue.Labels) > 0 {
-		md.WriteString("**Labels:** ")
+		header.WriteString("Labels: ")
 		for i, label := range issue.Labels {
 			if i > 0 {
-				md.WriteString(", ")
+				header.WriteString(", ")
 			}
-			md.WriteString(label.Name)
+			header.WriteString(label.Name)
 		}
-		md.WriteString("  \n")
+		header.WriteString("\n")
 	}
-	md.WriteString("\n---\n\n")
+	header.WriteString("\n---\n\n")
+	
+	var bodyContent string
 	if issue.Body != "" {
-		md.WriteString(issue.Body)
+		bodyContent = m.renderMarkdown(issue.Body)
 	} else if m.detailsLoad {
-		md.WriteString("_Loading details..._")
+		bodyContent = "_Loading details..._"
 	} else {
-		md.WriteString("_No description._")
+		bodyContent = "_No description._"
 	}
-	return m.renderMarkdown(md.String())
+	return header.String() + bodyContent
 }
 
 func (m boardModel) detailsViewString() string {
