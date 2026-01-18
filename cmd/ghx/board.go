@@ -60,6 +60,14 @@ type boardModel struct {
 	pendingMove   *pendingMove
 	debounceSeq   int
 	debounceReady bool
+	menuOpen      bool
+	menuIndex     int
+	subMenuOpen   bool
+	subMenuIndex  int
+	agentMenuOpen bool
+	agentIndex    int
+	modelMenuOpen bool
+	modelIndex    int
 }
 
 type issuesLoadedMsg struct {
@@ -80,6 +88,12 @@ type pendingMove struct {
 
 type debounceMsg struct {
 	seq int
+}
+
+type assignIssueMsg struct {
+	number   int
+	assignee string
+	err      error
 }
 
 type commitMoveMsg struct {
@@ -199,6 +213,7 @@ func printBoardHelp() {
 	fmt.Println("KEYS")
 	fmt.Println("  arrows:  move cursor")
 	fmt.Println("  enter:   pick/drop issue for lane move")
+	fmt.Println("  space:   quick actions menu (assign to agent, create worktree)")
 	fmt.Println("  i:       issue details")
 	fmt.Println("  c:       toggle closed issues")
 	fmt.Println("  r:       refresh issues")
@@ -262,6 +277,28 @@ func commitMoveCmd(number int, target int, add string, remove []string) tea.Cmd 
 			add:    add,
 			remove: remove,
 			err:    err,
+		}
+	}
+}
+
+func assignIssueCmd(number int, assignee string) tea.Cmd {
+	return func() tea.Msg {
+		err := assignIssue(number, assignee)
+		return assignIssueMsg{
+			number:   number,
+			assignee: assignee,
+			err:      err,
+		}
+	}
+}
+
+func createWorktreeAndAssignCmd(owner, repo string, number int, agent, model string) tea.Cmd {
+	return func() tea.Msg {
+		err := createWorktreeAndAssign(owner, repo, number, agent, model)
+		return assignIssueMsg{
+			number:   number,
+			assignee: agent,
+			err:      err,
 		}
 	}
 }
@@ -331,6 +368,18 @@ func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case assignIssueMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.status = fmt.Sprintf("Assign failed: %v", msg.err)
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Assigned #%d to @%s", msg.number, msg.assignee)
+		// Reload issue details if this issue is currently open
+		if m.detailsIssue != nil && m.detailsIssue.Number == msg.number {
+			return m, loadIssueDetailsCmd(msg.number)
+		}
+		return m, nil
 	case issueDetailsMsg:
 		m.detailsLoad = false
 		if msg.err != nil {
@@ -352,6 +401,7 @@ func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			issue.Milestone = msg.issue.Milestone
 			issue.Labels = msg.issue.Labels
 			issue.Comments = msg.issue.Comments
+			issue.LinkedPRs = msg.issue.LinkedPRs
 			issue.DetailsLoaded = true
 			updated = issue
 		}
@@ -402,9 +452,29 @@ func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *boardModel) updateBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle menu navigation if menu is open
+	if m.menuOpen {
+		return m.updateMenuKeys(msg)
+	}
+	if m.agentMenuOpen {
+		return m.updateAgentMenuKeys(msg)
+	}
+	if m.modelMenuOpen {
+		return m.updateModelMenuKeys(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case " ":
+		// Open quick actions menu
+		issue := m.currentIssue()
+		if issue != nil && !m.loading && !m.busy {
+			m.menuOpen = true
+			m.menuIndex = 0
+			m.status = "Quick Actions Menu"
+			return m, nil
+		}
 	case "c":
 		if m.loading || m.busy {
 			return m, nil
@@ -490,6 +560,111 @@ func (m *boardModel) updateDetails(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.detailsView, cmd = m.detailsView.Update(msg)
 	return m, cmd
+}
+
+func (m *boardModel) updateMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.menuOpen = false
+		m.menuIndex = 0
+		m.status = ""
+		return m, nil
+	case "up", "k":
+		if m.menuIndex > 0 {
+			m.menuIndex--
+		}
+	case "down", "j":
+		if m.menuIndex < 1 { // We have 2 menu items (0 and 1)
+			m.menuIndex++
+		}
+	case "enter":
+		issue := m.currentIssue()
+		if issue == nil {
+			m.menuOpen = false
+			return m, nil
+		}
+		
+		switch m.menuIndex {
+		case 0:
+			// Assign to Copilot Web
+			m.menuOpen = false
+			m.busy = true
+			m.status = fmt.Sprintf("Assigning #%d to @copilot...", issue.Number)
+			return m, assignIssueCmd(issue.Number, "copilot")
+		case 1:
+			// Create local worktree + enter
+			m.menuOpen = false
+			m.agentMenuOpen = true
+			m.agentIndex = 0
+			m.status = "Select Agent"
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m *boardModel) updateAgentMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.agentMenuOpen = false
+		m.agentIndex = 0
+		m.status = ""
+		return m, nil
+	case "up", "k":
+		if m.agentIndex > 0 {
+			m.agentIndex--
+		}
+	case "down", "j":
+		if m.agentIndex < 2 { // We have 3 agents (0, 1, 2)
+			m.agentIndex++
+		}
+	case "enter":
+		// Move to model selection
+		m.agentMenuOpen = false
+		m.modelMenuOpen = true
+		m.modelIndex = 0
+		m.status = "Select Model"
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *boardModel) updateModelMenuKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.modelMenuOpen = false
+		m.modelIndex = 0
+		m.agentMenuOpen = true
+		m.status = "Select Agent"
+		return m, nil
+	case "up", "k":
+		if m.modelIndex > 0 {
+			m.modelIndex--
+		}
+	case "down", "j":
+		if m.modelIndex < 2 { // We have 3 models (0, 1, 2)
+			m.modelIndex++
+		}
+	case "enter":
+		issue := m.currentIssue()
+		if issue == nil {
+			m.modelMenuOpen = false
+			return m, nil
+		}
+		
+		agents := []string{"copilot", "claude", "codex"}
+		models := []string{"standard", "advanced", "reasoning"}
+		
+		agent := agents[m.agentIndex]
+		model := models[m.modelIndex]
+		
+		m.modelMenuOpen = false
+		m.busy = true
+		m.status = fmt.Sprintf("Creating worktree and assigning #%d to %s (%s)...", issue.Number, agent, model)
+		
+		return m, createWorktreeAndAssignCmd(m.owner, m.repo, issue.Number, agent, model)
+	}
+	return m, nil
 }
 
 func (m *boardModel) resizeDetails() {
@@ -832,6 +1007,15 @@ func (m *boardModel) View() string {
 	if m.detailsOpen {
 		return m.detailsViewString()
 	}
+	if m.menuOpen {
+		return m.menuViewString()
+	}
+	if m.agentMenuOpen {
+		return m.agentMenuViewString()
+	}
+	if m.modelMenuOpen {
+		return m.modelMenuViewString()
+	}
 	header, status, help := m.renderChrome()
 	m.applyLayout(header, status, help)
 	board := m.renderBoard()
@@ -850,7 +1034,7 @@ func (m *boardModel) renderChrome() (string, string, string) {
 		statusText = m.errMsg
 		statusStyle = boardErrorStyle
 	}
-	helpText := "Arrows: move  Enter: pick/drop  i: details  c: closed  r: refresh  q: quit"
+	helpText := "Arrows: move  Enter: pick/drop  Space: actions  i: details  c: closed  r: refresh  q: quit"
 	if m.moving {
 		helpText = "Move mode: left/right lane  Enter: drop  Esc: cancel  q: quit"
 	}
@@ -1019,6 +1203,10 @@ func renderCard(issue *Issue, selected bool, moving bool, width int, height int,
 		if state != "open" {
 			metaParts = append(metaParts, state)
 		}
+	}
+	// Add PR indicator
+	if len(issue.LinkedPRs) > 0 {
+		metaParts = append(metaParts, fmt.Sprintf("PR:%d", len(issue.LinkedPRs)))
 	}
 	if badges != "" {
 		metaParts = append(metaParts, badges)
@@ -1225,6 +1413,34 @@ func (m *boardModel) detailsContent(issue *Issue) string {
 		}
 	}
 
+	// Add linked PRs section
+	lines = append(lines, baseLine.Render(""))
+	lines = append(lines, sectionLine.Render(fmt.Sprintf("Linked Pull Requests (%d)", len(issue.LinkedPRs))))
+	lines = append(lines, baseLine.Render(""))
+
+	if len(issue.LinkedPRs) == 0 {
+		if m.detailsLoad && !issue.DetailsLoaded {
+			lines = append(lines, mutedLine.Render("Loading linked PRs..."))
+		} else {
+			lines = append(lines, mutedLine.Render("No linked pull requests."))
+		}
+	} else {
+		for _, pr := range issue.LinkedPRs {
+			prState := strings.ToLower(pr.State)
+			stateColor := theme.AccentGreen
+			if prState == "closed" || prState == "merged" {
+				stateColor = theme.AccentPurple
+			}
+			stateStyle := lipgloss.NewStyle().Background(paper).Foreground(stateColor).Bold(true)
+			prLine := fmt.Sprintf("#%d: %s", pr.Number, pr.Title)
+			lines = append(lines, stateStyle.Width(width).Render(truncateString(prLine, width)))
+			if pr.URL != "" {
+				lines = append(lines, mutedLine.Render(truncateString(pr.URL, width)))
+			}
+			lines = append(lines, baseLine.Render(""))
+		}
+	}
+
 	lines = append(lines, baseLine.Render(""))
 	lines = append(lines, sectionLine.Render(fmt.Sprintf("Comments (%d)", len(issue.Comments))))
 	lines = append(lines, baseLine.Render(""))
@@ -1280,6 +1496,154 @@ func (m boardModel) detailsViewString() string {
 		Width(m.detailsView.Width + 4).
 		Height(m.detailsView.Height + 2)
 	modal := modalStyle.Render(content)
+	modalWidth := lipgloss.Width(modal)
+	modalHeight := lipgloss.Height(modal)
+	x0 := (width - modalWidth) / 2
+	y0 := (height - modalHeight) / 2
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+
+	bgLine := boardBackgroundLine(width)
+	leftPad := boardBackgroundLine(x0)
+	rightPad := boardBackgroundLine(width - x0 - modalWidth)
+	modalLines := strings.Split(modal, "\n")
+
+	lines := make([]string, 0, height)
+	for y := 0; y < height; y++ {
+		if y < y0 || y-y0 >= len(modalLines) {
+			lines = append(lines, bgLine)
+			continue
+		}
+		lines = append(lines, leftPad+modalLines[y-y0]+rightPad)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *boardModel) menuViewString() string {
+	width := m.width
+	height := m.height
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	issue := m.currentIssue()
+	if issue == nil {
+		return ""
+	}
+
+	menuItems := []string{
+		"Assign to Copilot Web",
+		"Create local worktree + assign",
+	}
+
+	var menuLines []string
+	menuLines = append(menuLines, fmt.Sprintf("Quick Actions - Issue #%d", issue.Number))
+	menuLines = append(menuLines, "")
+	for i, item := range menuItems {
+		if i == m.menuIndex {
+			menuLines = append(menuLines, "> "+item)
+		} else {
+			menuLines = append(menuLines, "  "+item)
+		}
+	}
+	menuLines = append(menuLines, "")
+	menuLines = append(menuLines, "↑↓: navigate  Enter: select  Esc: cancel")
+
+	content := strings.Join(menuLines, "\n")
+	modalStyle := lipgloss.NewStyle().
+		Background(theme.Paper).
+		Foreground(theme.Foreground).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.AccentBlue)
+	modal := modalStyle.Render(content)
+	return m.renderModalOverBoard(modal)
+}
+
+func (m *boardModel) agentMenuViewString() string {
+	width := m.width
+	height := m.height
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	issue := m.currentIssue()
+	if issue == nil {
+		return ""
+	}
+
+	agents := []string{"Copilot", "Claude", "Codex"}
+
+	var menuLines []string
+	menuLines = append(menuLines, fmt.Sprintf("Select Agent - Issue #%d", issue.Number))
+	menuLines = append(menuLines, "")
+	for i, agent := range agents {
+		if i == m.agentIndex {
+			menuLines = append(menuLines, "> "+agent)
+		} else {
+			menuLines = append(menuLines, "  "+agent)
+		}
+	}
+	menuLines = append(menuLines, "")
+	menuLines = append(menuLines, "↑↓: navigate  Enter: next  Esc: back")
+
+	content := strings.Join(menuLines, "\n")
+	modalStyle := lipgloss.NewStyle().
+		Background(theme.Paper).
+		Foreground(theme.Foreground).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.AccentPurple)
+	modal := modalStyle.Render(content)
+	return m.renderModalOverBoard(modal)
+}
+
+func (m *boardModel) modelMenuViewString() string {
+	width := m.width
+	height := m.height
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	issue := m.currentIssue()
+	if issue == nil {
+		return ""
+	}
+
+	models := []string{"Standard", "Advanced", "Reasoning"}
+
+	var menuLines []string
+	menuLines = append(menuLines, fmt.Sprintf("Select Model - Issue #%d", issue.Number))
+	menuLines = append(menuLines, "")
+	for i, model := range models {
+		if i == m.modelIndex {
+			menuLines = append(menuLines, "> "+model)
+		} else {
+			menuLines = append(menuLines, "  "+model)
+		}
+	}
+	menuLines = append(menuLines, "")
+	menuLines = append(menuLines, "↑↓: navigate  Enter: create  Esc: back")
+
+	content := strings.Join(menuLines, "\n")
+	modalStyle := lipgloss.NewStyle().
+		Background(theme.Paper).
+		Foreground(theme.Foreground).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.AccentGreen)
+	modal := modalStyle.Render(content)
+	return m.renderModalOverBoard(modal)
+}
+
+func (m *boardModel) renderModalOverBoard(modal string) string {
+	width := m.width
+	height := m.height
+	
 	modalWidth := lipgloss.Width(modal)
 	modalHeight := lipgloss.Height(modal)
 	x0 := (width - modalWidth) / 2
@@ -1562,6 +1926,46 @@ func editIssueLabels(number int, add string, remove []string) error {
 		}
 		return fmt.Errorf("%v: %s", err, msg)
 	}
+	return nil
+}
+
+func assignIssue(number int, assignee string) error {
+	args := []string{"issue", "edit", fmt.Sprintf("%d", number), "--add-assignee", assignee}
+	cmd := exec.Command("gh", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%v: %s", err, msg)
+	}
+	return nil
+}
+
+func createWorktreeAndAssign(owner, repo string, number int, agent, model string) error {
+	// Create branch name from issue number
+	branchName := fmt.Sprintf("issue-%d-%s", number, agent)
+	
+	// Create worktree in a subdirectory
+	worktreePath := fmt.Sprintf("../worktrees/%s", branchName)
+	
+	// Create worktree with new branch
+	cmd := exec.Command("git", "worktree", "add", "-b", branchName, worktreePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("failed to create worktree: %v", err)
+		}
+		return fmt.Errorf("failed to create worktree: %v: %s", err, msg)
+	}
+	
+	// Assign the issue
+	if err := assignIssue(number, agent); err != nil {
+		return fmt.Errorf("worktree created but assign failed: %v", err)
+	}
+	
 	return nil
 }
 
@@ -1874,8 +2278,95 @@ func loadIssueDetailsCmd(number int) tea.Cmd {
 		if err := json.Unmarshal(out, &issue); err != nil {
 			return issueDetailsMsg{issue: Issue{Number: number}, err: err}
 		}
+		
+		// Fetch linked PRs using GraphQL
+		linkedPRs, err := fetchLinkedPRs(number)
+		if err == nil {
+			issue.LinkedPRs = linkedPRs
+		}
+		
 		return issueDetailsMsg{issue: issue}
 	}
+}
+
+func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
+	// Use GraphQL to find PRs that reference this issue
+	query := fmt.Sprintf(`{
+		repository(owner: "", name: "") {
+			issue(number: %d) {
+				timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: 50) {
+					nodes {
+						... on CrossReferencedEvent {
+							source {
+								... on PullRequest {
+									number
+									title
+									url
+									state
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`, issueNumber)
+	
+	// Get repo info
+	owner, repo, err := getRepoInfo()
+	if err != nil {
+		return nil, err
+	}
+	
+	// Inject owner and repo into query
+	query = strings.Replace(query, `owner: ""`, fmt.Sprintf(`owner: "%s"`, owner), 1)
+	query = strings.Replace(query, `name: ""`, fmt.Sprintf(`name: "%s"`, repo), 1)
+	
+	cmd := exec.Command("gh", "api", "graphql", "-f", "query="+query)
+	out, err := cmd.Output()
+	if err != nil {
+		// Return empty list on error - not critical
+		return []PullRequest{}, nil
+	}
+	
+	var resp struct {
+		Data struct {
+			Repository struct {
+				Issue struct {
+					TimelineItems struct {
+						Nodes []struct {
+							Source *struct {
+								Number int    `json:"number"`
+								Title  string `json:"title"`
+								URL    string `json:"url"`
+								State  string `json:"state"`
+							} `json:"source"`
+						} `json:"nodes"`
+					} `json:"timelineItems"`
+				} `json:"issue"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return []PullRequest{}, nil
+	}
+	
+	var prs []PullRequest
+	seen := make(map[int]bool)
+	for _, node := range resp.Data.Repository.Issue.TimelineItems.Nodes {
+		if node.Source != nil && !seen[node.Source.Number] {
+			seen[node.Source.Number] = true
+			prs = append(prs, PullRequest{
+				Number: node.Source.Number,
+				Title:  node.Source.Title,
+				URL:    node.Source.URL,
+				State:  node.Source.State,
+			})
+		}
+	}
+	
+	return prs, nil
 }
 
 func (m boardModel) findIssueByNumber(number int) *Issue {
