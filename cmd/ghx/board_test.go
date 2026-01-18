@@ -662,7 +662,7 @@ func TestRenderColumnSpacingMatchesHitTest(t *testing.T) {
 		boardLeft:   0,
 		boardWidth:  24,
 		boardTop:    0,
-		boardHeight: 25,
+		boardHeight: 50,
 		cardGap:     1,
 	}
 	m.layout.cardHeight = m.measureCardHeight()

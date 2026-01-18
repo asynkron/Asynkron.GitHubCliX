@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -20,14 +21,43 @@ type ParentRef struct {
 	Number int `json:"number"`
 }
 
+type User struct {
+	Login string `json:"login"`
+	Name  string `json:"name"`
+	IsBot bool   `json:"is_bot"`
+}
+
+type IssueComment struct {
+	Author    *User     `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	URL       string    `json:"url"`
+}
+
+type Milestone struct {
+	Title  string `json:"title"`
+	Number int    `json:"number"`
+}
+
 type Issue struct {
-	Number int        `json:"number"`
-	Title  string     `json:"title"`
-	Body   string     `json:"body"`
-	URL    string     `json:"url"`
-	State  string     `json:"state"`
-	Labels []Label    `json:"labels"`
-	Parent *ParentRef `json:"parent"`
+	Number      int            `json:"number"`
+	Title       string         `json:"title"`
+	Body        string         `json:"body"`
+	URL         string         `json:"url"`
+	State       string         `json:"state"`
+	StateReason string         `json:"stateReason"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+	ClosedAt    *time.Time     `json:"closedAt"`
+	Author      *User          `json:"author"`
+	Assignees   []User         `json:"assignees"`
+	Milestone   *Milestone     `json:"milestone"`
+	Labels      []Label        `json:"labels"`
+	Comments    []IssueComment `json:"comments"`
+	Parent      *ParentRef     `json:"parent"`
+
+	DetailsLoaded bool `json:"-"`
 }
 
 type Node struct {

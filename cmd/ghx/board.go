@@ -11,7 +11,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -53,8 +52,6 @@ type boardModel struct {
 	detailsIssue  *Issue
 	detailsView   viewport.Model
 	detailsLoad   bool
-	mdRenderer    *glamour.TermRenderer
-	mdWidth       int
 	issueState    string
 	issueLimit    int
 	movingIssue   int
@@ -71,9 +68,8 @@ type issuesLoadedMsg struct {
 }
 
 type issueDetailsMsg struct {
-	number int
-	body   string
-	err    error
+	issue Issue
+	err   error
 }
 
 type pendingMove struct {
@@ -97,6 +93,7 @@ type commitMoveMsg struct {
 const (
 	boardHeaderHeight = 2
 	boardHelpHeight   = 1
+	boardCardHeight   = 6
 )
 
 type Theme struct {
@@ -151,7 +148,7 @@ func runBoard(args []string) int {
 		}
 	}
 
-	state := "all"
+	state := "open"
 	limit := 200
 	for i := 0; i < len(args); i++ {
 		if (args[i] == "--state" || args[i] == "-state") && i+1 < len(args) {
@@ -169,7 +166,7 @@ func runBoard(args []string) int {
 		limit = 200
 	}
 	if state != "open" && state != "closed" && state != "all" {
-		state = "all"
+		state = "open"
 	}
 
 	owner, repo, err := getRepoInfo()
@@ -203,6 +200,7 @@ func printBoardHelp() {
 	fmt.Println("  arrows:  move cursor")
 	fmt.Println("  enter:   pick/drop issue for lane move")
 	fmt.Println("  i:       issue details")
+	fmt.Println("  c:       toggle closed issues")
 	fmt.Println("  r:       refresh issues")
 	fmt.Println("  q:       quit")
 	fmt.Println()
@@ -228,7 +226,7 @@ func newBoardModel(owner, repo string, lanes []boardLane, state string, limit in
 func defaultBoardLayout(width, height, cols int) boardLayout {
 	layout := boardLayout{
 		colGap:     2,
-		cardHeight: 5,
+		cardHeight: boardCardHeight,
 		cardGap:    1,
 	}
 	layout.boardTop = boardHeaderHeight
@@ -286,7 +284,16 @@ func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.errMsg = ""
-		m.status = fmt.Sprintf("Loaded %d issues.", len(msg.issues))
+		stateLabel := m.issueState
+		switch stateLabel {
+		case "open":
+			stateLabel = "open"
+		case "closed":
+			stateLabel = "closed"
+		case "all":
+			stateLabel = "open+closed"
+		}
+		m.status = fmt.Sprintf("Loaded %d %s issues.", len(msg.issues), stateLabel)
 		m.lanes = assignIssues(m.lanes, msg.issues)
 		m.pendingMove = nil
 		m.debounceReady = false
@@ -330,15 +337,38 @@ func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Details failed: %v", msg.err)
 			return m, nil
 		}
-		if issue := m.findIssueByNumber(msg.number); issue != nil {
-			issue.Body = msg.body
+		var updated *Issue
+		if issue := m.findIssueByNumber(msg.issue.Number); issue != nil {
+			issue.Title = msg.issue.Title
+			issue.Body = msg.issue.Body
+			issue.URL = msg.issue.URL
+			issue.State = msg.issue.State
+			issue.StateReason = msg.issue.StateReason
+			issue.CreatedAt = msg.issue.CreatedAt
+			issue.UpdatedAt = msg.issue.UpdatedAt
+			issue.ClosedAt = msg.issue.ClosedAt
+			issue.Author = msg.issue.Author
+			issue.Assignees = msg.issue.Assignees
+			issue.Milestone = msg.issue.Milestone
+			issue.Labels = msg.issue.Labels
+			issue.Comments = msg.issue.Comments
+			issue.DetailsLoaded = true
+			updated = issue
 		}
-		if m.detailsIssue != nil && m.detailsIssue.Number == msg.number {
+		if m.detailsIssue != nil && m.detailsIssue.Number == msg.issue.Number {
+			if updated != nil {
+				m.detailsIssue = updated
+			}
 			m.detailsView.SetContent(m.detailsContent(m.detailsIssue))
 		}
 		return m, nil
 	case tea.MouseMsg:
-		if m.detailsOpen || m.loading {
+		if m.detailsOpen {
+			var cmd tea.Cmd
+			m.detailsView, cmd = m.detailsView.Update(msg)
+			return m, cmd
+		}
+		if m.loading {
 			return m, nil
 		}
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -375,6 +405,25 @@ func (m *boardModel) updateBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "c":
+		if m.loading || m.busy {
+			return m, nil
+		}
+		if m.moving || m.dragging {
+			m.moving = false
+			m.movingIssue = 0
+			m.moveSticky = false
+			m.dragging = false
+		}
+		if m.issueState == "open" {
+			m.issueState = "all"
+			m.status = "Showing open + closed issues..."
+		} else {
+			m.issueState = "open"
+			m.status = "Showing open issues..."
+		}
+		m.loading = true
+		return m, loadIssuesCmd(m.issueState, m.issueLimit)
 	case "r":
 		if !m.loading && !m.busy {
 			m.loading = true
@@ -457,16 +506,17 @@ func (m *boardModel) resizeDetails() {
 	}
 	m.detailsView.Width = width
 	m.detailsView.Height = height
-	m.ensureMarkdownRenderer(width)
 	m.detailsView.SetContent(m.detailsContent(m.detailsIssue))
 }
 
 func (m *boardModel) openDetails(issue *Issue) tea.Cmd {
 	m.detailsOpen = true
 	m.detailsIssue = issue
-	m.detailsLoad = issue.Body == ""
+	m.detailsLoad = issue == nil || !issue.DetailsLoaded
 	m.detailsView = viewport.New(0, 0)
+	m.detailsView.MouseWheelEnabled = true
 	m.resizeDetails()
+	m.detailsView.GotoTop()
 	m.detailsView.YPosition = 0
 	if m.detailsLoad {
 		m.detailsView.SetContent(m.detailsContent(issue))
@@ -800,7 +850,7 @@ func (m *boardModel) renderChrome() (string, string, string) {
 		statusText = m.errMsg
 		statusStyle = boardErrorStyle
 	}
-	helpText := "Arrows: move  Enter: pick/drop  i: details  r: refresh  q: quit"
+	helpText := "Arrows: move  Enter: pick/drop  i: details  c: closed  r: refresh  q: quit"
 	if m.moving {
 		helpText = "Move mode: left/right lane  Enter: drop  Esc: cancel  q: quit"
 	}
@@ -843,7 +893,7 @@ func (m *boardModel) applyLayout(header, status, help string) {
 		m.layout.boardHeight = 4
 	}
 	m.layout.colWidth, m.layout.colGap, m.layout.boardLeft, m.layout.boardWidth = computeBoardColumns(m.width, cols)
-	m.layout.cardHeight = m.measureCardHeight()
+	m.layout.cardHeight = boardCardHeight
 }
 
 func (m boardModel) renderBoard() string {
@@ -919,7 +969,7 @@ func (m boardModel) renderColumn(idx int) string {
 	for i := offset; i < end; i++ {
 		selected := idx == m.laneIndex && i == m.rowByCol[idx]
 		moving := m.moving && lane.Issues[i].Number == m.movingIssue
-		card := renderCard(lane.Issues[i], selected, moving, m.layout.colWidth, m.lanes)
+		card := renderCard(lane.Issues[i], selected, moving, m.layout.colWidth, m.layout.cardHeight, m.lanes)
 		lines = append(lines, strings.Split(card, "\n")...)
 		if i < end-1 {
 			for g := 0; g < m.layout.cardGap; g++ {
@@ -936,17 +986,51 @@ func (m boardModel) renderColumn(idx int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderCard(issue *Issue, selected bool, moving bool, width int, lanes []boardLane) string {
-	if width <= 0 {
+func renderCard(issue *Issue, selected bool, moving bool, width int, height int, lanes []boardLane) string {
+	if width <= 0 || height <= 0 {
 		return ""
 	}
 	contentWidth := width - 2
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
+
+	cardBg := theme.Paper
+	if selected {
+		cardBg = lipgloss.AdaptiveColor{Light: "#EDEDED", Dark: "#2C313C"}
+	}
+	if moving {
+		cardBg = lipgloss.AdaptiveColor{Light: "#F2EAF7", Dark: "#2A2730"}
+	}
+
 	title := fmt.Sprintf("#%d %s", issue.Number, issue.Title)
 	title = truncateString(title, contentWidth)
 	badges := renderIssueBadges(issue, lanes, contentWidth)
+
+	var metaParts []string
+	if issue.Author != nil && issue.Author.Login != "" {
+		metaParts = append(metaParts, "@"+issue.Author.Login)
+	}
+	if updated := formatTimeShort(issue.UpdatedAt); updated != "" {
+		metaParts = append(metaParts, updated)
+	}
+	if issue.State != "" {
+		state := strings.ToLower(issue.State)
+		if state != "open" {
+			metaParts = append(metaParts, state)
+		}
+	}
+	if badges != "" {
+		metaParts = append(metaParts, badges)
+	}
+	meta := truncateString(strings.Join(metaParts, " · "), contentWidth)
+
+	snippetLines := height - 2
+	if snippetLines < 0 {
+		snippetLines = 0
+	}
+	snippet := summarizeText(issue.Body)
+	body := wrapText(snippet, contentWidth, snippetLines)
 
 	titleColor := theme.AccentBlue
 	if selected {
@@ -957,17 +1041,35 @@ func renderCard(issue *Issue, selected bool, moving bool, width int, lanes []boa
 	}
 
 	titleLineStyle := lipgloss.NewStyle().
-		Background(theme.Paper).
+		Background(cardBg).
 		Foreground(titleColor).
 		Bold(true).
 		Padding(0, 1).
 		Width(width)
-	badgesLineStyle := lipgloss.NewStyle().
-		Background(theme.Paper).
+	metaLineStyle := lipgloss.NewStyle().
+		Background(cardBg).
 		Foreground(theme.Muted).
 		Padding(0, 1).
 		Width(width)
-	return titleLineStyle.Render(title) + "\n" + badgesLineStyle.Render(badges)
+	bodyLineStyle := lipgloss.NewStyle().
+		Background(cardBg).
+		Foreground(theme.Foreground).
+		Padding(0, 1).
+		Width(width)
+
+	lines := make([]string, 0, height)
+	lines = append(lines, titleLineStyle.Render(title))
+	lines = append(lines, metaLineStyle.Render(meta))
+	for _, l := range body {
+		lines = append(lines, bodyLineStyle.Render(l))
+	}
+	for len(lines) < height {
+		lines = append(lines, bodyLineStyle.Render(""))
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderIssueBadges(issue *Issue, lanes []boardLane, width int) string {
@@ -989,11 +1091,7 @@ func renderIssueBadges(issue *Issue, lanes []boardLane, width int) string {
 		}
 	}
 	if len(parts) == 0 {
-		if issue.State != "" {
-			parts = append(parts, strings.ToLower(issue.State))
-		} else {
-			parts = append(parts, "no labels")
-		}
+		return ""
 	}
 	line := strings.Join(parts, ", ")
 	return truncateString(line, width)
@@ -1019,42 +1117,153 @@ func laneHeaderStyle(lane boardLane, active bool, width int) string {
 }
 
 func (m *boardModel) detailsContent(issue *Issue) string {
-	if issue == nil {
-		return "No issue selected."
+	width := m.detailsView.Width
+	if width <= 0 {
+		width = 80
 	}
-	var header strings.Builder
-	header.WriteString(fmt.Sprintf("#%d %s\n\n", issue.Number, issue.Title))
-	if issue.State != "" {
-		header.WriteString("State: ")
-		header.WriteString(strings.ToLower(issue.State))
-		header.WriteString("\n")
+	paper := theme.Paper
+	baseLine := lipgloss.NewStyle().Background(paper).Foreground(theme.Foreground).Width(width)
+	mutedLine := lipgloss.NewStyle().Background(paper).Foreground(theme.Muted).Width(width)
+	titleLine := lipgloss.NewStyle().Background(paper).Foreground(theme.AccentYellow).Bold(true).Width(width)
+	sectionLine := lipgloss.NewStyle().Background(paper).Foreground(theme.AccentCyan).Bold(true).Width(width)
+	commentHeaderLine := lipgloss.NewStyle().Background(paper).Foreground(theme.AccentGreen).Bold(true).Width(width)
+	keyStyle := lipgloss.NewStyle().Background(paper).Foreground(theme.Muted).Bold(true)
+	valStyle := lipgloss.NewStyle().Background(paper).Foreground(theme.Foreground)
+
+	kv := func(key, value string) string {
+		keyWidth := 12
+		if keyWidth >= width-1 {
+			keyWidth = max(1, width/3)
+		}
+		keyText := truncateString(key+":", keyWidth-1)
+		keyText = padRightRunes(keyText, keyWidth-1) + " "
+		valWidth := width - keyWidth
+		if valWidth < 1 {
+			valWidth = 1
+		}
+		return keyStyle.Width(keyWidth).Render(keyText) + valStyle.Width(valWidth).Render(truncateString(value, valWidth))
+	}
+
+	if issue == nil {
+		return mutedLine.Render("No issue selected.")
+	}
+
+	lines := make([]string, 0, 128)
+	lines = append(lines, titleLine.Render(truncateString(fmt.Sprintf("#%d %s", issue.Number, issue.Title), width)))
+	if m.detailsLoad && !issue.DetailsLoaded {
+		lines = append(lines, mutedLine.Render("Loading details..."))
+	}
+	lines = append(lines, baseLine.Render(""))
+
+	state := strings.ToLower(issue.State)
+	if state == "" {
+		state = "unknown"
+	}
+	lines = append(lines, kv("State", state))
+	if issue.StateReason != "" {
+		lines = append(lines, kv("Reason", issue.StateReason))
+	}
+	if issue.Author != nil && issue.Author.Login != "" {
+		author := "@" + issue.Author.Login
+		if issue.Author.Name != "" {
+			author += " (" + issue.Author.Name + ")"
+		}
+		lines = append(lines, kv("Author", author))
+	}
+	if len(issue.Assignees) > 0 {
+		var assignees []string
+		for _, a := range issue.Assignees {
+			if a.Login != "" {
+				assignees = append(assignees, "@"+a.Login)
+			}
+		}
+		if len(assignees) > 0 {
+			lines = append(lines, kv("Assignees", strings.Join(assignees, ", ")))
+		}
+	}
+	if issue.Milestone != nil && issue.Milestone.Title != "" {
+		lines = append(lines, kv("Milestone", issue.Milestone.Title))
+	}
+	if !issue.CreatedAt.IsZero() {
+		lines = append(lines, kv("Created", formatTimeLong(issue.CreatedAt)))
+	}
+	if !issue.UpdatedAt.IsZero() {
+		lines = append(lines, kv("Updated", formatTimeLong(issue.UpdatedAt)))
+	}
+	if issue.ClosedAt != nil && !issue.ClosedAt.IsZero() {
+		lines = append(lines, kv("Closed", formatTimeLong(*issue.ClosedAt)))
 	}
 	if issue.URL != "" {
-		header.WriteString("URL: ")
-		header.WriteString(issue.URL)
-		header.WriteString("\n")
+		lines = append(lines, kv("URL", issue.URL))
 	}
 	if len(issue.Labels) > 0 {
-		header.WriteString("Labels: ")
-		for i, label := range issue.Labels {
-			if i > 0 {
-				header.WriteString(", ")
+		var labels []string
+		for _, l := range issue.Labels {
+			if l.Name != "" {
+				labels = append(labels, l.Name)
 			}
-			header.WriteString(label.Name)
 		}
-		header.WriteString("\n")
+		if len(labels) > 0 {
+			lines = append(lines, kv("Labels", strings.Join(labels, ", ")))
+		}
 	}
-	header.WriteString("\n---\n\n")
 
-	var bodyContent string
-	if issue.Body != "" {
-		bodyContent = m.renderMarkdown(issue.Body)
-	} else if m.detailsLoad {
-		bodyContent = "Loading details..."
+	lines = append(lines, baseLine.Render(""))
+	lines = append(lines, sectionLine.Render("Description"))
+	lines = append(lines, baseLine.Render(""))
+
+	body := issue.Body
+	if body == "" {
+		if m.detailsLoad && !issue.DetailsLoaded {
+			lines = append(lines, mutedLine.Render("Loading description..."))
+		} else {
+			lines = append(lines, mutedLine.Render("No description."))
+		}
 	} else {
-		bodyContent = "No description."
+		for _, l := range wrapTextBlock(body, width) {
+			lines = append(lines, baseLine.Render(l))
+		}
 	}
-	return header.String() + bodyContent
+
+	lines = append(lines, baseLine.Render(""))
+	lines = append(lines, sectionLine.Render(fmt.Sprintf("Comments (%d)", len(issue.Comments))))
+	lines = append(lines, baseLine.Render(""))
+
+	if len(issue.Comments) == 0 {
+		if m.detailsLoad && !issue.DetailsLoaded {
+			lines = append(lines, mutedLine.Render("Loading comments..."))
+		} else {
+			lines = append(lines, mutedLine.Render("No comments."))
+		}
+	} else {
+		for i, c := range issue.Comments {
+			author := "unknown"
+			if c.Author != nil && c.Author.Login != "" {
+				author = "@" + c.Author.Login
+			}
+			when := ""
+			if !c.CreatedAt.IsZero() {
+				when = formatTimeLong(c.CreatedAt)
+			}
+			header := fmt.Sprintf("%d. %s", i+1, author)
+			if when != "" {
+				header = fmt.Sprintf("%d. %s · %s", i+1, author, when)
+			}
+			lines = append(lines, commentHeaderLine.Render(truncateString(header, width)))
+			if c.Body == "" {
+				lines = append(lines, mutedLine.Render("No comment text."))
+			} else {
+				for _, l := range wrapTextBlock(c.Body, width) {
+					lines = append(lines, baseLine.Render(l))
+				}
+			}
+			if i < len(issue.Comments)-1 {
+				lines = append(lines, baseLine.Render(""))
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func (m boardModel) detailsViewString() string {
@@ -1096,42 +1305,6 @@ func (m boardModel) detailsViewString() string {
 		lines = append(lines, leftPad+modalLines[y-y0]+rightPad)
 	}
 	return strings.Join(lines, "\n")
-}
-
-func (m *boardModel) ensureMarkdownRenderer(width int) {
-	if width <= 0 {
-		width = 80
-	}
-	if m.mdRenderer != nil && m.mdWidth == width {
-		return
-	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		m.mdRenderer = nil
-		m.mdWidth = width
-		return
-	}
-	m.mdRenderer = renderer
-	m.mdWidth = width
-}
-
-func (m *boardModel) renderMarkdown(content string) string {
-	wrapWidth := m.detailsView.Width
-	if wrapWidth <= 0 {
-		wrapWidth = 80
-	}
-	m.ensureMarkdownRenderer(wrapWidth)
-	if m.mdRenderer == nil {
-		return content
-	}
-	rendered, err := m.mdRenderer.Render(content)
-	if err != nil {
-		return content
-	}
-	return rendered
 }
 
 func (m *boardModel) handleMousePress(x, y int) {
@@ -1240,16 +1413,7 @@ func (m *boardModel) syncLayoutForInput() {
 }
 
 func (m *boardModel) measureCardHeight() int {
-	if m.layout.colWidth <= 0 {
-		return m.layout.cardHeight
-	}
-	dummy := &Issue{Number: 1, Title: "Issue"}
-	card := renderCard(dummy, false, false, m.layout.colWidth, m.lanes)
-	measured := lipgloss.Height(card)
-	if measured < 2 {
-		measured = 2
-	}
-	return measured
+	return boardCardHeight
 }
 
 func computeBoardColumns(width, cols int) (colWidth int, colGap int, boardLeft int, boardWidth int) {
@@ -1333,7 +1497,7 @@ func ensureLaneLabels(lanes []boardLane) error {
 }
 
 func fetchIssues(state string, limit int) ([]Issue, error) {
-	args := []string{"issue", "list", "--state", state, "--limit", fmt.Sprintf("%d", limit), "--json", "number,title,labels,state,url"}
+	args := []string{"issue", "list", "--state", state, "--limit", fmt.Sprintf("%d", limit), "--json", "number,title,labels,state,url,body,author,createdAt,updatedAt,closedAt"}
 	cmd := exec.Command("gh", args...)
 	out, err := cmd.Output()
 	if err != nil {
@@ -1424,6 +1588,274 @@ func truncateString(s string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func padRightRunes(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) >= width {
+		return string(runes[:width])
+	}
+	return string(runes) + strings.Repeat(" ", width-len(runes))
+}
+
+func formatTimeLong(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func formatTimeShort(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	now := time.Now()
+	d := now.Sub(t)
+	if d < 0 {
+		d = -d
+	}
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	default:
+		if t.Year() == now.Year() {
+			return t.Local().Format("Jan 2")
+		}
+		return t.Local().Format("2006-01-02")
+	}
+}
+
+func summarizeText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+
+	var parts []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+		if len(parts) >= 6 {
+			break
+		}
+	}
+	out := strings.Join(parts, " ")
+	return collapseSpaces(out)
+}
+
+func collapseSpaces(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if space {
+				continue
+			}
+			space = true
+			b.WriteRune(' ')
+			continue
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func wrapText(text string, width int, maxLines int) []string {
+	if maxLines <= 0 || width <= 0 {
+		return nil
+	}
+	text = collapseSpaces(text)
+	if text == "" {
+		return nil
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	lines, truncated := wrapWords(words, width, maxLines)
+	if truncated && len(lines) > 0 {
+		last := lines[len(lines)-1]
+		if width <= 1 {
+			lines[len(lines)-1] = "…"
+		} else {
+			lines[len(lines)-1] = truncateString(last, width-1) + "…"
+		}
+	}
+	return lines
+}
+
+func wrapTextBlock(text string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	linesIn := strings.Split(text, "\n")
+	out := make([]string, 0, len(linesIn))
+	for _, line := range linesIn {
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			out = append(out, "")
+			continue
+		}
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") || strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "    ") {
+			out = append(out, truncateString(line, width))
+			continue
+		}
+
+		firstPrefix, nextPrefix, rest := splitWrapPrefix(line)
+		availFirst := width - len([]rune(firstPrefix))
+		availNext := width - len([]rune(nextPrefix))
+		if availFirst < 1 {
+			availFirst = 1
+		}
+		if availNext < 1 {
+			availNext = 1
+		}
+
+		words := strings.Fields(rest)
+		if len(words) == 0 {
+			out = append(out, truncateString(line, width))
+			continue
+		}
+
+		wrapped, _ := wrapWords(words, availFirst, 0)
+		for i, w := range wrapped {
+			prefix := firstPrefix
+			avail := availFirst
+			if i > 0 {
+				prefix = nextPrefix
+				avail = availNext
+			}
+			out = append(out, prefix+truncateString(w, avail))
+		}
+	}
+	return out
+}
+
+func splitWrapPrefix(line string) (firstPrefix string, nextPrefix string, rest string) {
+	leadingSpaces := 0
+	for leadingSpaces < len(line) && line[leadingSpaces] == ' ' {
+		leadingSpaces++
+	}
+	indent := strings.Repeat(" ", leadingSpaces)
+	trimmed := line[leadingSpaces:]
+
+	switch {
+	case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ "):
+		firstPrefix = indent + trimmed[:2]
+		nextPrefix = indent + "  "
+		rest = strings.TrimSpace(trimmed[2:])
+		return firstPrefix, nextPrefix, rest
+	case strings.HasPrefix(trimmed, "> "):
+		firstPrefix = indent + "> "
+		nextPrefix = indent + "  "
+		rest = strings.TrimSpace(trimmed[2:])
+		return firstPrefix, nextPrefix, rest
+	default:
+		if n := parseNumberedListPrefix(trimmed); n > 0 {
+			firstPrefix = indent + trimmed[:n]
+			nextPrefix = indent + strings.Repeat(" ", n)
+			rest = strings.TrimSpace(trimmed[n:])
+			return firstPrefix, nextPrefix, rest
+		}
+		firstPrefix = indent
+		nextPrefix = indent
+		rest = strings.TrimSpace(trimmed)
+		return firstPrefix, nextPrefix, rest
+	}
+}
+
+func parseNumberedListPrefix(s string) int {
+	if len(s) < 3 {
+		return 0
+	}
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i+1 >= len(s) {
+		return 0
+	}
+	if s[i] != '.' || s[i+1] != ' ' {
+		return 0
+	}
+	return i + 2
+}
+
+func wrapWords(words []string, width int, maxLines int) ([]string, bool) {
+	if width <= 0 || len(words) == 0 {
+		return nil, false
+	}
+
+	lines := make([]string, 0, max(4, maxLines))
+	var line []rune
+	truncated := false
+
+	flush := func() {
+		if len(line) == 0 {
+			return
+		}
+		lines = append(lines, string(line))
+		line = line[:0]
+	}
+
+	for _, w := range words {
+		if maxLines > 0 && len(lines) >= maxLines {
+			truncated = true
+			break
+		}
+		word := []rune(w)
+		if len(word) > width {
+			word = []rune(truncateString(string(word), width))
+		}
+		if len(line) == 0 {
+			line = append(line, word...)
+			continue
+		}
+		if len(line)+1+len(word) <= width {
+			line = append(line, ' ')
+			line = append(line, word...)
+			continue
+		}
+		flush()
+		if maxLines > 0 && len(lines) >= maxLines {
+			truncated = true
+			break
+		}
+		line = append(line, word...)
+	}
+	flush()
+
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+		truncated = true
+	}
+
+	return lines, truncated
+}
+
 func stripHash(color string) string {
 	if len(color) > 0 && color[0] == '#' {
 		return color[1:]
@@ -1433,18 +1865,16 @@ func stripHash(color string) string {
 
 func loadIssueDetailsCmd(number int) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("gh", "issue", "view", fmt.Sprintf("%d", number), "--json", "body")
+		cmd := exec.Command("gh", "issue", "view", fmt.Sprintf("%d", number), "--json", "number,title,state,stateReason,url,body,author,assignees,milestone,labels,createdAt,updatedAt,closedAt,comments")
 		out, err := cmd.Output()
 		if err != nil {
-			return issueDetailsMsg{number: number, err: err}
+			return issueDetailsMsg{issue: Issue{Number: number}, err: err}
 		}
-		var resp struct {
-			Body string `json:"body"`
+		var issue Issue
+		if err := json.Unmarshal(out, &issue); err != nil {
+			return issueDetailsMsg{issue: Issue{Number: number}, err: err}
 		}
-		if err := json.Unmarshal(out, &resp); err != nil {
-			return issueDetailsMsg{number: number, err: err}
-		}
-		return issueDetailsMsg{number: number, body: resp.Body}
+		return issueDetailsMsg{issue: issue}
 	}
 }
 
