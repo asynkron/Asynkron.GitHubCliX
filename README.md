@@ -9,7 +9,7 @@ Features
 - `ghx board` opens a full-screen Kanban board for issues
 - Flags: `--open`, `--closed`, `--root <title|#id|id>`, `--link`
 - Bug and blocked labels rendered inline
-- Styled output using charmbracelet/lipgloss (One Dark theme)
+- Styled output using charmbracelet/lipgloss with adaptive theme (automatically switches between light and dark mode based on terminal background)
 
 Install
 - From source: `go install ./cmd/ghx`

@@ -205,28 +205,28 @@ func renderTree(roots []*Node, width int, showLink bool) {
 	}
 }
 
-const (
-	colorBranch      = "#5C6370" // One Dark comment gray
-	colorOpenID      = "#98C379" // One Dark green
-	colorClosedID    = "#5C6370" // gray (same as branch)
-	colorTitlePrefix = "#61AFEF" // One Dark blue
-	colorTitleSuffix = "#D4D8DE" // light gray (brighter)
-	colorBugDot      = "#E06C75" // One Dark red
-	colorHeader      = "#E5C07B" // One Dark yellow
-)
-
+// Color definitions using AdaptiveColor for automatic light/dark switching
 var (
-	branchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBranch))
-	openIDStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorOpenID))
-	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorClosedID))
-	prefixStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitlePrefix))
-	suffixStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitleSuffix))
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorHeader))
+	colorBranch      = lipgloss.AdaptiveColor{Light: "#A0A1A7", Dark: "#5C6370"} // comment gray
+	colorOpenID      = lipgloss.AdaptiveColor{Light: "#50A14F", Dark: "#98C379"} // green
+	colorClosedID    = lipgloss.AdaptiveColor{Light: "#A0A1A7", Dark: "#5C6370"} // gray (same as branch)
+	colorTitlePrefix = lipgloss.AdaptiveColor{Light: "#4078F2", Dark: "#61AFEF"} // blue
+	colorTitleSuffix = lipgloss.AdaptiveColor{Light: "#383A42", Dark: "#D4D8DE"} // darker/lighter gray
+	colorHeader      = lipgloss.AdaptiveColor{Light: "#C18401", Dark: "#E5C07B"} // yellow
+
+	branchStyle   = lipgloss.NewStyle().Foreground(colorBranch)
+	openIDStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorOpenID)
+	closedIDStyle = lipgloss.NewStyle().Bold(true).Foreground(colorClosedID)
+	prefixStyle   = lipgloss.NewStyle().Foreground(colorTitlePrefix)
+	suffixStyle   = lipgloss.NewStyle().Foreground(colorTitleSuffix)
+	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorHeader)
 )
 
 func renderLabel(label Label) string {
 	color := "#" + label.Color
-	return lipgloss.NewStyle().Background(lipgloss.Color(color)).Foreground(lipgloss.Color("#0A0B0D")).Render(label.Name)
+	// Use adaptive colors for the foreground text on labels
+	labelTextColor := lipgloss.AdaptiveColor{Light: "#000000", Dark: "#0A0B0D"}
+	return lipgloss.NewStyle().Background(lipgloss.Color(color)).Foreground(labelTextColor).Render(label.Name)
 }
 
 func renderLabels(labels []Label) string {
@@ -309,15 +309,15 @@ func runIssueTree(args []string) int {
 	var rootNum int
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--open" {
+		if a == "--open" || a == "-open" {
 			hasOpen = true
 			continue
 		}
-		if a == "--closed" {
+		if a == "--closed" || a == "-closed" {
 			hasClosed = true
 			continue
 		}
-		if a == "--link" {
+		if a == "--link" || a == "-link" {
 			showLink = true
 			continue
 		}
@@ -581,7 +581,7 @@ func runIssueLink(args []string) int {
 	// Parse args: <issue> [--parent <num>] [--child <num>] [--unlink]
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if a == "--parent" && i+1 < len(args) {
+		if (a == "--parent" || a == "-parent") && i+1 < len(args) {
 			val := args[i+1]
 			if len(val) > 0 && val[0] == '#' {
 				val = val[1:]
@@ -590,7 +590,7 @@ func runIssueLink(args []string) int {
 			i++
 			continue
 		}
-		if a == "--child" && i+1 < len(args) {
+		if (a == "--child" || a == "-child") && i+1 < len(args) {
 			val := args[i+1]
 			if len(val) > 0 && val[0] == '#' {
 				val = val[1:]
@@ -599,7 +599,7 @@ func runIssueLink(args []string) int {
 			i++
 			continue
 		}
-		if a == "--unlink" {
+		if a == "--unlink" || a == "-unlink" {
 			unlink = true
 			continue
 		}
@@ -614,14 +614,14 @@ func runIssueLink(args []string) int {
 	}
 
 	if targetNum == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent <parent-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child <child-issue>")
-		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink")
+		fmt.Fprintln(os.Stderr, "Usage: ghx issue link <issue> --parent, -parent <parent-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --child, -child <child-issue>")
+		fmt.Fprintln(os.Stderr, "       ghx issue link <issue> --unlink, -unlink")
 		return 1
 	}
 
 	if !unlink && parentNum == 0 && childNum == 0 {
-		fmt.Fprintln(os.Stderr, "Error: must specify --parent, --child, or --unlink")
+		fmt.Fprintln(os.Stderr, "Error: must specify --parent, -parent, --child, -child, or --unlink, -unlink")
 		return 1
 	}
 

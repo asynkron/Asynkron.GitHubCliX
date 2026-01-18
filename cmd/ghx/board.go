@@ -16,10 +16,11 @@ import (
 )
 
 type boardLane struct {
-	Name   string
-	Label  string
-	Color  string
-	Issues []*Issue
+	Name          string
+	Label         string
+	Color         string                   // Hex color for GitHub labels (without #)
+	DisplayColor  lipgloss.AdaptiveColor   // Adaptive color for UI display
+	Issues        []*Issue
 }
 
 type boardLayout struct {
@@ -97,46 +98,46 @@ const (
 )
 
 type Theme struct {
-	Background   string
-	Paper        string
-	Foreground   string
-	Muted        string
-	AccentBlue   string
-	AccentPurple string
-	AccentYellow string
-	AccentGreen  string
-	AccentRed    string
-	AccentCyan   string
+	Background   lipgloss.AdaptiveColor
+	Paper        lipgloss.AdaptiveColor
+	Foreground   lipgloss.AdaptiveColor
+	Muted        lipgloss.AdaptiveColor
+	AccentBlue   lipgloss.AdaptiveColor
+	AccentPurple lipgloss.AdaptiveColor
+	AccentYellow lipgloss.AdaptiveColor
+	AccentGreen  lipgloss.AdaptiveColor
+	AccentRed    lipgloss.AdaptiveColor
+	AccentCyan   lipgloss.AdaptiveColor
 }
 
 var defaultTheme = Theme{
-	Background:   "#21252B",
-	Paper:        "#282C34",
-	Foreground:   "#ABB2BF",
-	Muted:        "#5C6370",
-	AccentBlue:   "#61AFEF",
-	AccentPurple: "#C678DD",
-	AccentYellow: "#E5C07B",
-	AccentGreen:  "#98C379",
-	AccentRed:    "#E06C75",
-	AccentCyan:   "#56B6C2",
+	Background:   lipgloss.AdaptiveColor{Light: "#FAFAFA", Dark: "#21252B"},
+	Paper:        lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#282C34"},
+	Foreground:   lipgloss.AdaptiveColor{Light: "#383A42", Dark: "#ABB2BF"},
+	Muted:        lipgloss.AdaptiveColor{Light: "#A0A1A7", Dark: "#5C6370"},
+	AccentBlue:   lipgloss.AdaptiveColor{Light: "#4078F2", Dark: "#61AFEF"},
+	AccentPurple: lipgloss.AdaptiveColor{Light: "#A626A4", Dark: "#C678DD"},
+	AccentYellow: lipgloss.AdaptiveColor{Light: "#C18401", Dark: "#E5C07B"},
+	AccentGreen:  lipgloss.AdaptiveColor{Light: "#50A14F", Dark: "#98C379"},
+	AccentRed:    lipgloss.AdaptiveColor{Light: "#E45649", Dark: "#E06C75"},
+	AccentCyan:   lipgloss.AdaptiveColor{Light: "#0184BC", Dark: "#56B6C2"},
 }
 
 var theme = defaultTheme
 
 var (
-	boardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.AccentYellow))
-	boardMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Muted))
-	boardErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.AccentRed))
-	boardHelpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.AccentPurple))
+	boardTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(theme.AccentYellow)
+	boardMutedStyle = lipgloss.NewStyle().Foreground(theme.Muted)
+	boardErrorStyle = lipgloss.NewStyle().Foreground(theme.AccentRed)
+	boardHelpStyle  = lipgloss.NewStyle().Foreground(theme.AccentPurple)
 )
 
 func defaultBoardLanes() []boardLane {
 	return []boardLane{
-		{Name: "TODO", Label: "TODO", Color: stripHash(theme.AccentBlue)},
-		{Name: "Doing", Label: "Doing", Color: stripHash(theme.AccentYellow)},
-		{Name: "Done", Label: "Done", Color: stripHash(theme.AccentGreen)},
-		{Name: "Blocked", Label: "Blocked", Color: stripHash(theme.AccentRed)},
+		{Name: "TODO", Label: "TODO", Color: stripHash(theme.AccentBlue.Dark), DisplayColor: theme.AccentBlue},
+		{Name: "Doing", Label: "Doing", Color: stripHash(theme.AccentYellow.Dark), DisplayColor: theme.AccentYellow},
+		{Name: "Done", Label: "Done", Color: stripHash(theme.AccentGreen.Dark), DisplayColor: theme.AccentGreen},
+		{Name: "Blocked", Label: "Blocked", Color: stripHash(theme.AccentRed.Dark), DisplayColor: theme.AccentRed},
 	}
 }
 
@@ -151,12 +152,12 @@ func runBoard(args []string) int {
 	state := "all"
 	limit := 200
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--state" && i+1 < len(args) {
+		if (args[i] == "--state" || args[i] == "-state") && i+1 < len(args) {
 			state = args[i+1]
 			i++
 			continue
 		}
-		if args[i] == "--limit" && i+1 < len(args) {
+		if (args[i] == "--limit" || args[i] == "-limit") && i+1 < len(args) {
 			limit = atoi(args[i+1])
 			i++
 			continue
@@ -194,7 +195,7 @@ func printBoardHelp() {
 	fmt.Println("Open a full-screen Kanban board for GitHub issues.")
 	fmt.Println()
 	fmt.Println("USAGE")
-	fmt.Println("  ghx board [--state <open|closed|all>] [--limit <n>]")
+	fmt.Println("  ghx board [--state, -state <open|closed|all>] [--limit, -limit <n>]")
 	fmt.Println()
 	fmt.Println("KEYS")
 	fmt.Println("  arrows:  move cursor")
@@ -780,7 +781,7 @@ func (m *boardModel) View() string {
 	m.applyLayout(header, status, help)
 	board := m.renderBoard()
 	content := lipgloss.JoinVertical(lipgloss.Left, header, status, board, help)
-	root := lipgloss.NewStyle().Background(lipgloss.Color(theme.Background))
+	root := lipgloss.NewStyle().Background(theme.Background)
 	if m.width > 0 {
 		root = root.Width(m.width)
 	}
@@ -803,9 +804,9 @@ func (m *boardModel) renderChrome() (string, string, string) {
 	}
 	helpText := "Arrows: move  Enter: pick/drop  i: details  r: refresh  q: quit"
 
-	headerStyle := boardTitleStyle.Background(lipgloss.Color(theme.Background))
-	statusStyle = statusStyle.Background(lipgloss.Color(theme.Background))
-	helpStyle := boardHelpStyle.Background(lipgloss.Color(theme.Background))
+	headerStyle := boardTitleStyle.Background(theme.Background)
+	statusStyle = statusStyle.Background(theme.Background)
+	helpStyle := boardHelpStyle.Background(theme.Background)
 	if m.width > 0 {
 		headerStyle = headerStyle.Width(m.width)
 		statusStyle = statusStyle.Width(m.width)
@@ -848,7 +849,7 @@ func (m boardModel) renderBoard() string {
 		columns = append(columns, m.renderColumn(i))
 	}
 	gap := lipgloss.NewStyle().
-		Background(lipgloss.Color(theme.Background)).
+		Background(theme.Background).
 		Width(m.layout.colGap).
 		Render(strings.Repeat(" ", m.layout.colGap))
 	return lipgloss.JoinHorizontal(lipgloss.Top, joinWithGap(columns, gap)...)
@@ -899,7 +900,7 @@ func (m boardModel) renderColumn(idx int) string {
 	colStyle := lipgloss.NewStyle().
 		Width(m.layout.colWidth).
 		Height(m.layout.boardHeight).
-		Background(lipgloss.Color(theme.Background))
+		Background(theme.Background)
 	return colStyle.Render(content.String())
 }
 
@@ -913,16 +914,16 @@ func renderCard(issue *Issue, selected bool, moving bool, width int, lanes []boa
 		contentWidth = 1
 	}
 	cardStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(theme.Paper)).
-		Foreground(lipgloss.Color(theme.Foreground)).
+		Background(theme.Paper).
+		Foreground(theme.Foreground).
 		Padding(0, 1).
 		Width(boxWidth)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(theme.AccentBlue))
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.AccentBlue)
 	if selected {
-		titleStyle = titleStyle.Foreground(lipgloss.Color(theme.AccentYellow))
+		titleStyle = titleStyle.Foreground(theme.AccentYellow)
 	}
 	if moving {
-		titleStyle = titleStyle.Foreground(lipgloss.Color(theme.AccentPurple))
+		titleStyle = titleStyle.Foreground(theme.AccentPurple)
 	}
 	title := fmt.Sprintf("#%d %s", issue.Number, issue.Title)
 	title = titleStyle.Render(truncateString(title, contentWidth))
@@ -970,7 +971,7 @@ func laneHeaderStyle(lane boardLane, active bool, width int) string {
 	name = truncateString(name, contentWidth)
 	style := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#" + lane.Color)).
+		Foreground(lane.DisplayColor).
 		Width(width)
 	if active {
 		style = style.Underline(true)
@@ -1025,8 +1026,8 @@ func (m boardModel) detailsViewString() string {
 	}
 	content := m.detailsView.View()
 	modalStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(theme.Paper)).
-		Foreground(lipgloss.Color(theme.Foreground)).
+		Background(theme.Paper).
+		Foreground(theme.Foreground).
 		Padding(1, 2).
 		Width(m.detailsView.Width + 4).
 		Height(m.detailsView.Height + 2)
@@ -1042,7 +1043,7 @@ func (m *boardModel) ensureMarkdownRenderer(width int) {
 		return
 	}
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
