@@ -69,8 +69,6 @@ type boardModel struct {
 	debounceReady bool
 	menuOpen      bool
 	menuIndex     int
-	subMenuOpen   bool
-	subMenuIndex  int
 	agentMenuOpen bool
 	agentIndex    int
 	modelMenuOpen bool
@@ -1430,13 +1428,22 @@ func (m *boardModel) detailsContent(issue *Issue) string {
 		}
 	} else {
 		for _, pr := range issue.LinkedPRs {
-			prState := strings.ToLower(pr.State)
+			prState := strings.ToUpper(pr.State)
 			stateColor := theme.AccentGreen
-			if prState == "closed" || prState == "merged" {
+			stateLabel := prState
+			switch prState {
+			case "MERGED":
 				stateColor = theme.AccentPurple
+				stateLabel = "MERGED"
+			case "CLOSED":
+				stateColor = theme.AccentRed
+				stateLabel = "CLOSED"
+			default:
+				stateColor = theme.AccentGreen
+				stateLabel = "OPEN"
 			}
 			stateStyle := lipgloss.NewStyle().Background(paper).Foreground(stateColor).Bold(true)
-			prLine := fmt.Sprintf("#%d: %s", pr.Number, pr.Title)
+			prLine := fmt.Sprintf("#%d [%s]: %s", pr.Number, stateLabel, pr.Title)
 			lines = append(lines, stateStyle.Width(width).Render(truncateString(prLine, width)))
 			if pr.URL != "" {
 				lines = append(lines, mutedLine.Render(truncateString(pr.URL, width)))
