@@ -40,6 +40,13 @@ type Milestone struct {
 	Number int    `json:"number"`
 }
 
+type PullRequest struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+	State  string `json:"state"`
+}
+
 type Issue struct {
 	Number      int            `json:"number"`
 	Title       string         `json:"title"`
@@ -56,6 +63,7 @@ type Issue struct {
 	Labels      []Label        `json:"labels"`
 	Comments    []IssueComment `json:"comments"`
 	Parent      *ParentRef     `json:"parent"`
+	LinkedPRs   []PullRequest  `json:"-"`
 
 	DetailsLoaded bool `json:"-"`
 }
