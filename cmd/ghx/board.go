@@ -16,17 +16,19 @@ import (
 )
 
 type boardLane struct {
-	Name          string
-	Label         string
-	Color         string                   // Hex color for GitHub labels (without #)
-	DisplayColor  lipgloss.AdaptiveColor   // Adaptive color for UI display
-	Issues        []*Issue
+	Name         string
+	Label        string
+	Color        string                 // Hex color for GitHub labels (without #)
+	DisplayColor lipgloss.AdaptiveColor // Adaptive color for UI display
+	Issues       []*Issue
 }
 
 type boardLayout struct {
 	colWidth    int
 	colGap      int
 	boardTop    int
+	boardLeft   int
+	boardWidth  int
 	boardHeight int
 	cardHeight  int
 	cardGap     int
@@ -225,9 +227,9 @@ func newBoardModel(owner, repo string, lanes []boardLane, state string, limit in
 
 func defaultBoardLayout(width, height, cols int) boardLayout {
 	layout := boardLayout{
-		colGap:     0,
+		colGap:     2,
 		cardHeight: 5,
-		cardGap:    2,
+		cardGap:    1,
 	}
 	layout.boardTop = boardHeaderHeight
 	if height > 0 {
@@ -237,10 +239,7 @@ func defaultBoardLayout(width, height, cols int) boardLayout {
 		}
 	}
 	if width > 0 && cols > 0 {
-		layout.colWidth = (width - layout.colGap*(cols-1)) / cols
-		if layout.colWidth < 16 {
-			layout.colWidth = 16
-		}
+		layout.colWidth, layout.colGap, layout.boardLeft, layout.boardWidth = computeBoardColumns(width, cols)
 	}
 	return layout
 }
@@ -414,8 +413,14 @@ func (m *boardModel) updateBoardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.moveLane(1)
 	case "up", "k":
+		if m.moving {
+			return m, nil
+		}
 		m.moveCursor(-1)
 	case "down", "j":
+		if m.moving {
+			return m, nil
+		}
 		m.moveCursor(1)
 	case "i", "o":
 		issue := m.currentIssue()
@@ -781,14 +786,7 @@ func (m *boardModel) View() string {
 	m.applyLayout(header, status, help)
 	board := m.renderBoard()
 	content := lipgloss.JoinVertical(lipgloss.Left, header, status, board, help)
-	root := lipgloss.NewStyle().Background(theme.Background)
-	if m.width > 0 {
-		root = root.Width(m.width)
-	}
-	if m.height > 0 {
-		root = root.Height(m.height)
-	}
-	return root.Render(content)
+	return content
 }
 
 func (m *boardModel) renderChrome() (string, string, string) {
@@ -803,11 +801,22 @@ func (m *boardModel) renderChrome() (string, string, string) {
 		statusStyle = boardErrorStyle
 	}
 	helpText := "Arrows: move  Enter: pick/drop  i: details  r: refresh  q: quit"
+	if m.moving {
+		helpText = "Move mode: left/right lane  Enter: drop  Esc: cancel  q: quit"
+	}
 
-	headerStyle := boardTitleStyle.Background(theme.Background)
-	statusStyle = statusStyle.Background(theme.Background)
-	helpStyle := boardHelpStyle.Background(theme.Background)
+	headerStyle := boardTitleStyle.Background(theme.Background).Padding(0, 1)
+	statusStyle = statusStyle.Background(theme.Background).Padding(0, 1)
+	helpStyle := boardHelpStyle.Background(theme.Background).Padding(0, 1)
 	if m.width > 0 {
+		contentWidth := m.width - 2
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
+		headerText = truncateString(headerText, contentWidth)
+		statusText = truncateString(statusText, contentWidth)
+		helpText = truncateString(helpText, contentWidth)
+
 		headerStyle = headerStyle.Width(m.width)
 		statusStyle = statusStyle.Width(m.width)
 		helpStyle = helpStyle.Width(m.width)
@@ -833,26 +842,40 @@ func (m *boardModel) applyLayout(header, status, help string) {
 	if m.layout.boardHeight < 4 {
 		m.layout.boardHeight = 4
 	}
-	m.layout.colWidth = (m.width - m.layout.colGap*(cols-1)) / cols
-	if m.layout.colWidth < 16 {
-		m.layout.colWidth = 16
-	}
+	m.layout.colWidth, m.layout.colGap, m.layout.boardLeft, m.layout.boardWidth = computeBoardColumns(m.width, cols)
 	m.layout.cardHeight = m.measureCardHeight()
 }
 
 func (m boardModel) renderBoard() string {
 	if m.layout.boardHeight < 4 {
-		return boardMutedStyle.Render("Window too small for board.")
+		return boardMutedStyle.Background(theme.Background).Padding(0, 1).Width(m.width).Render("Window too small for board.")
+	}
+	if m.layout.colWidth <= 0 || len(m.lanes) == 0 || m.width <= 0 {
+		return ""
 	}
 	columns := make([]string, 0, len(m.lanes))
 	for i := range m.lanes {
 		columns = append(columns, m.renderColumn(i))
 	}
-	gap := lipgloss.NewStyle().
-		Background(theme.Background).
-		Width(m.layout.colGap).
-		Render(strings.Repeat(" ", m.layout.colGap))
-	return lipgloss.JoinHorizontal(lipgloss.Top, joinWithGap(columns, gap)...)
+	gap := boardBackgroundBlock(m.layout.colGap, m.layout.boardHeight)
+	left := boardBackgroundBlock(m.layout.boardLeft, m.layout.boardHeight)
+	rightWidth := m.width - m.layout.boardLeft - m.layout.boardWidth
+	right := boardBackgroundBlock(rightWidth, m.layout.boardHeight)
+
+	parts := make([]string, 0, 2+len(m.lanes)*2)
+	if left != "" {
+		parts = append(parts, left)
+	}
+	for i, col := range columns {
+		if i > 0 && gap != "" {
+			parts = append(parts, gap)
+		}
+		parts = append(parts, col)
+	}
+	if right != "" {
+		parts = append(parts, right)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 func joinWithGap(cols []string, gap string) []string {
@@ -872,64 +895,79 @@ func joinWithGap(cols []string, gap string) []string {
 func (m boardModel) renderColumn(idx int) string {
 	lane := m.lanes[idx]
 	header := laneHeaderStyle(lane, idx == m.laneIndex, m.layout.colWidth)
-	cardAreaHeight := m.layout.boardHeight - 1
-	var content strings.Builder
-	content.WriteString(header)
-	content.WriteString("\n")
+	if m.layout.boardHeight <= 1 {
+		return header
+	}
 
+	blank := boardBackgroundLine(m.layout.colWidth)
+	lines := make([]string, 0, m.layout.boardHeight)
+	lines = append(lines, header)
+
+	cardAreaHeight := m.layout.boardHeight - 1
 	cardBlock := m.layout.cardHeight + m.layout.cardGap
 	visible := cardAreaHeight / cardBlock
 	if visible < 1 {
 		visible = 1
 	}
+
 	offset := m.offsetByCol[idx]
 	end := offset + visible
 	if end > len(lane.Issues) {
 		end = len(lane.Issues)
 	}
+
 	for i := offset; i < end; i++ {
 		selected := idx == m.laneIndex && i == m.rowByCol[idx]
-		card := renderCard(lane.Issues[i], selected, m.moving && selected, m.layout.colWidth, m.lanes)
-		content.WriteString(card)
+		moving := m.moving && lane.Issues[i].Number == m.movingIssue
+		card := renderCard(lane.Issues[i], selected, moving, m.layout.colWidth, m.lanes)
+		lines = append(lines, strings.Split(card, "\n")...)
 		if i < end-1 {
 			for g := 0; g < m.layout.cardGap; g++ {
-				content.WriteString("\n")
+				lines = append(lines, blank)
 			}
 		}
 	}
-	colStyle := lipgloss.NewStyle().
-		Width(m.layout.colWidth).
-		Height(m.layout.boardHeight).
-		Background(theme.Background)
-	return colStyle.Render(content.String())
+	for len(lines) < m.layout.boardHeight {
+		lines = append(lines, blank)
+	}
+	if len(lines) > m.layout.boardHeight {
+		lines = lines[:m.layout.boardHeight]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func renderCard(issue *Issue, selected bool, moving bool, width int, lanes []boardLane) string {
-	boxWidth := width - 2
-	if boxWidth < 1 {
-		boxWidth = 1
+	if width <= 0 {
+		return ""
 	}
-	contentWidth := boxWidth - 2
+	contentWidth := width - 2
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	cardStyle := lipgloss.NewStyle().
-		Background(theme.Paper).
-		Foreground(theme.Foreground).
-		Padding(0, 1).
-		Width(boxWidth)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.AccentBlue)
+	title := fmt.Sprintf("#%d %s", issue.Number, issue.Title)
+	title = truncateString(title, contentWidth)
+	badges := renderIssueBadges(issue, lanes, contentWidth)
+
+	titleColor := theme.AccentBlue
 	if selected {
-		titleStyle = titleStyle.Foreground(theme.AccentYellow)
+		titleColor = theme.AccentYellow
 	}
 	if moving {
-		titleStyle = titleStyle.Foreground(theme.AccentPurple)
+		titleColor = theme.AccentPurple
 	}
-	title := fmt.Sprintf("#%d %s", issue.Number, issue.Title)
-	title = titleStyle.Render(truncateString(title, contentWidth))
-	labels := renderIssueBadges(issue, lanes, contentWidth)
-	content := title + "\n" + labels
-	return cardStyle.Render(content)
+
+	titleLineStyle := lipgloss.NewStyle().
+		Background(theme.Paper).
+		Foreground(titleColor).
+		Bold(true).
+		Padding(0, 1).
+		Width(width)
+	badgesLineStyle := lipgloss.NewStyle().
+		Background(theme.Paper).
+		Foreground(theme.Muted).
+		Padding(0, 1).
+		Width(width)
+	return titleLineStyle.Render(title) + "\n" + badgesLineStyle.Render(badges)
 }
 
 func renderIssueBadges(issue *Issue, lanes []boardLane, width int) string {
@@ -958,13 +996,12 @@ func renderIssueBadges(issue *Issue, lanes []boardLane, width int) string {
 		}
 	}
 	line := strings.Join(parts, ", ")
-	line = truncateString(line, width)
-	return boardMutedStyle.Render(line)
+	return truncateString(line, width)
 }
 
 func laneHeaderStyle(lane boardLane, active bool, width int) string {
 	name := fmt.Sprintf("%s (%d)", lane.Name, len(lane.Issues))
-	contentWidth := width
+	contentWidth := width - 2
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -972,6 +1009,8 @@ func laneHeaderStyle(lane boardLane, active bool, width int) string {
 	style := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lane.DisplayColor).
+		Background(theme.Background).
+		Padding(0, 1).
 		Width(width)
 	if active {
 		style = style.Underline(true)
@@ -1032,7 +1071,31 @@ func (m boardModel) detailsViewString() string {
 		Width(m.detailsView.Width + 4).
 		Height(m.detailsView.Height + 2)
 	modal := modalStyle.Render(content)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	modalWidth := lipgloss.Width(modal)
+	modalHeight := lipgloss.Height(modal)
+	x0 := (width - modalWidth) / 2
+	y0 := (height - modalHeight) / 2
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+
+	bgLine := boardBackgroundLine(width)
+	leftPad := boardBackgroundLine(x0)
+	rightPad := boardBackgroundLine(width - x0 - modalWidth)
+	modalLines := strings.Split(modal, "\n")
+
+	lines := make([]string, 0, height)
+	for y := 0; y < height; y++ {
+		if y < y0 || y-y0 >= len(modalLines) {
+			lines = append(lines, bgLine)
+			continue
+		}
+		lines = append(lines, leftPad+modalLines[y-y0]+rightPad)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *boardModel) ensureMarkdownRenderer(width int) {
@@ -1153,6 +1216,10 @@ func (m *boardModel) hitTest(x, y int) (int, int, bool) {
 }
 
 func (m *boardModel) laneAtX(x int) int {
+	if x < m.layout.boardLeft || x >= m.layout.boardLeft+m.layout.boardWidth {
+		return -1
+	}
+	x -= m.layout.boardLeft
 	colSpan := m.layout.colWidth + m.layout.colGap
 	if colSpan <= 0 {
 		return -1
@@ -1183,6 +1250,55 @@ func (m *boardModel) measureCardHeight() int {
 		measured = 2
 	}
 	return measured
+}
+
+func computeBoardColumns(width, cols int) (colWidth int, colGap int, boardLeft int, boardWidth int) {
+	if width <= 0 || cols <= 0 {
+		return 0, 0, 0, 0
+	}
+	colGap = 2
+	if width < cols*14 {
+		colGap = 1
+	}
+	if width < cols*12 {
+		colGap = 0
+	}
+	available := width - colGap*(cols-1)
+	if available < cols {
+		available = cols
+	}
+	colWidth = available / cols
+	boardWidth = colWidth*cols + colGap*(cols-1)
+	if boardWidth > width {
+		boardWidth = width
+	}
+	boardLeft = (width - boardWidth) / 2
+	if boardLeft < 0 {
+		boardLeft = 0
+	}
+	return colWidth, colGap, boardLeft, boardWidth
+}
+
+func boardBackgroundBlock(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	line := boardBackgroundLine(width)
+	lines := make([]string, height)
+	for i := range lines {
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func boardBackgroundLine(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return lipgloss.NewStyle().
+		Background(theme.Background).
+		Width(width).
+		Render("")
 }
 
 func ensureLaneLabels(lanes []boardLane) error {

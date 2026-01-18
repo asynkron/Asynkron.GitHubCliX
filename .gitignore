@@ -1,10 +1,16 @@
 # Build artifacts
-ghx
 /ghx
+/ghx.exe
+
+# OS cruft
+.DS_Store
+**/.DS_Store
+
+# Logs
+error.log
 
 # Test binaries
 *.test
 
 # Go workspace file
 go.work
-

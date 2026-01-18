@@ -784,6 +784,7 @@ func printIssueHelp() {
 	fmt.Println("USAGE")
 	fmt.Println("  ghx issue <command> [flags]")
 	fmt.Println("  ghx \"<title>: <body>\"        Create an issue from a string")
+	fmt.Println("  ghx \"<title>: <body> [flags]\" Create an issue with flags")
 	fmt.Println()
 	fmt.Println("GHX COMMANDS")
 	fmt.Println("  link:        Set parent/child relationship between issues")
@@ -792,23 +793,54 @@ func printIssueHelp() {
 	fmt.Println("EXAMPLES")
 	fmt.Println("  ghx \"Bug: Fix login form validation\"")
 	fmt.Println("  ghx \"Feature: Add dark mode support\"")
+	fmt.Println("  ghx \"Bug: Login issue --assignee @copilot --label critical\"")
+	fmt.Println("  ghx \"Feature: Dark mode --label enhancement\"")
 	fmt.Println()
 	fmt.Println("-----")
 	fmt.Println()
 }
 
-func createIssueFromString(issueStr string) int {
-	// Split on first colon
-	colonIdx := indexOf(issueStr, ":")
-	if colonIdx < 0 {
-		fmt.Fprintf(os.Stderr, "ghx: issue string must contain ':' separator (format: 'title: body')\n")
-		return 1
+func parseIssueFlags(bodyStr string) (string, []string) {
+	// Find the first "--" to separate body from flags
+	flagIdx := indexOf(bodyStr, "--")
+	var body string
+	var flags []string
+
+	if flagIdx < 0 {
+		// No flags found
+		body = bodyStr
+	} else {
+		// Split at the first "--"
+		body = bodyStr[:flagIdx]
+		flagsStr := bodyStr[flagIdx:]
+
+		// Parse flags from flagsStr
+		// Simple parser: split on spaces and build flag pairs
+		parts := []string{}
+		current := ""
+		inQuote := false
+		for i := 0; i < len(flagsStr); i++ {
+			ch := flagsStr[i]
+			if ch == '"' && (i == 0 || flagsStr[i-1] != '\\') {
+				inQuote = !inQuote
+				current += string(ch)
+			} else if (ch == ' ' || ch == '\t') && !inQuote {
+				if len(current) > 0 {
+					parts = append(parts, current)
+					current = ""
+				}
+			} else {
+				current += string(ch)
+			}
+		}
+		if len(current) > 0 {
+			parts = append(parts, current)
+		}
+
+		flags = parts
 	}
 
-	title := issueStr[:colonIdx]
-	body := issueStr[colonIdx+1:]
-
-	// Trim leading/trailing whitespace from body
+	// Trim whitespace from body
 	for len(body) > 0 && (body[0] == ' ' || body[0] == '\t' || body[0] == '\n' || body[0] == '\r') {
 		body = body[1:]
 	}
@@ -816,11 +848,29 @@ func createIssueFromString(issueStr string) int {
 		body = body[:len(body)-1]
 	}
 
+	return body, flags
+}
+
+func createIssueFromString(issueStr string) int {
+	// Split on first colon
+	colonIdx := indexOf(issueStr, ":")
+	if colonIdx < 0 {
+		fmt.Fprintf(os.Stderr, "ghx: issue string must contain ':' separator (format: 'title: body [flags]')\n")
+		return 1
+	}
+
+	title := issueStr[:colonIdx]
+	bodyAndFlags := issueStr[colonIdx+1:]
+
+	// Parse body and flags
+	body, flags := parseIssueFlags(bodyAndFlags)
+
 	// Create issue using gh CLI
 	args := []string{"issue", "create", "--title", title}
 	if len(body) > 0 {
 		args = append(args, "--body", body)
 	}
+	args = append(args, flags...)
 
 	cmd := exec.Command("gh", args...)
 	cmd.Stdout = os.Stdout
