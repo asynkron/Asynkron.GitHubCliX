@@ -2290,10 +2290,16 @@ func loadIssueDetailsCmd(number int) tea.Cmd {
 }
 
 func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
-	// Use GraphQL to find PRs that reference this issue
-	query := fmt.Sprintf(`{
-		repository(owner: "", name: "") {
-			issue(number: %d) {
+	// Get repo info
+	owner, repo, err := getRepoInfo()
+	if err != nil {
+		return nil, err
+	}
+
+	// Use GraphQL with variables instead of string interpolation
+	query := `query($owner: String!, $repo: String!, $number: Int!) {
+		repository(owner: $owner, name: $repo) {
+			issue(number: $number) {
 				timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: 50) {
 					nodes {
 						... on CrossReferencedEvent {
@@ -2310,22 +2316,17 @@ func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
 				}
 			}
 		}
-	}`, issueNumber)
+	}`
 
-	// Get repo info
-	owner, repo, err := getRepoInfo()
-	if err != nil {
-		return nil, err
-	}
-
-	// Inject owner and repo into query
-	query = strings.Replace(query, `owner: ""`, fmt.Sprintf(`owner: "%s"`, owner), 1)
-	query = strings.Replace(query, `name: ""`, fmt.Sprintf(`name: "%s"`, repo), 1)
-
-	cmd := exec.Command("gh", "api", "graphql", "-f", "query="+query)
+	cmd := exec.Command("gh", "api", "graphql",
+		"-f", "query="+query,
+		"-f", fmt.Sprintf("owner=%s", owner),
+		"-f", fmt.Sprintf("repo=%s", repo),
+		"-F", fmt.Sprintf("number=%d", issueNumber))
 	out, err := cmd.Output()
 	if err != nil {
-		// Return empty list on error - not critical
+		// Log error but return empty list - not critical for board functionality
+		fmt.Fprintf(os.Stderr, "Warning: failed to fetch linked PRs for issue #%d: %v\n", issueNumber, err)
 		return []PullRequest{}, nil
 	}
 
@@ -2349,6 +2350,7 @@ func fetchLinkedPRs(issueNumber int) ([]PullRequest, error) {
 	}
 
 	if err := json.Unmarshal(out, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to parse linked PRs for issue #%d: %v\n", issueNumber, err)
 		return []PullRequest{}, nil
 	}
 
