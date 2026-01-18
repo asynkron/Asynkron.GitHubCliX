@@ -1010,9 +1010,9 @@ func (m *boardModel) detailsContent(issue *Issue) string {
 	if issue.Body != "" {
 		bodyContent = m.renderMarkdown(issue.Body)
 	} else if m.detailsLoad {
-		bodyContent = "_Loading details..._"
+		bodyContent = "Loading details..."
 	} else {
-		bodyContent = "_No description._"
+		bodyContent = "No description."
 	}
 	return header.String() + bodyContent
 }
