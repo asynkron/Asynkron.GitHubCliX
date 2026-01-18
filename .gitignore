@@ -1,0 +1,9 @@
+# Build artifacts
+ghx
+/ghx
+
+# Test binaries
+*.test
+
+# Go workspace file
+go.work
