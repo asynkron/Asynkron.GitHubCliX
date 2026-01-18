@@ -1005,7 +1005,7 @@ func (m *boardModel) detailsContent(issue *Issue) string {
 		header.WriteString("\n")
 	}
 	header.WriteString("\n---\n\n")
-	
+
 	var bodyContent string
 	if issue.Body != "" {
 		bodyContent = m.renderMarkdown(issue.Body)
