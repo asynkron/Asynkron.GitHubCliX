@@ -6,8 +6,9 @@ A thin wrapper around GitHub CLI (`gh`) with extra visualizations.
 Features
 - Pass-through to `gh` for all commands
 - `ghx issue tree` renders parent-child issue trees
+- `ghx issue tree` flags: `--open`, `--closed`, `--root <title|#id|id>`, `--link`
 - `ghx board` opens a full-screen Kanban board for issues
-- Flags: `--open`, `--closed`, `--root <title|#id|id>`, `--link`
+- `ghx board` flags: `--state <open|closed|all>` (default: `open`), `--limit <n>` (default: `200`)
 - Bug and blocked labels rendered inline
 - Styled output using charmbracelet/lipgloss with adaptive theme (automatically switches between light and dark mode based on terminal background)
 
@@ -21,6 +22,8 @@ Usage
 - `ghx issue tree --root 399`
 - `ghx issue tree --link` (show issue URLs)
 - `ghx board`
+- `ghx board --state closed`
+- `ghx board --state all --limit 500`
 
 Notes
 - Parent relationship from GitHub's native sub-issue feature
