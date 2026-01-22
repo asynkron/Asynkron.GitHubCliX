@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -414,5 +417,73 @@ func TestNumDigits(t *testing.T) {
 				t.Errorf("numDigits() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func captureOutput(t *testing.T, stream **os.File, fn func()) string {
+	t.Helper()
+
+	original := *stream
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	*stream = w
+	t.Cleanup(func() {
+		*stream = original
+	})
+
+	fn()
+
+	_ = w.Close()
+	out, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	return string(out)
+}
+
+func TestRunIssueLink_NoArgs_PrintsUsage(t *testing.T) {
+	exitCode := 0
+	stderr := captureOutput(t, &os.Stderr, func() {
+		exitCode = runIssueLink(nil)
+	})
+
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Usage: ghx issue link") {
+		t.Fatalf("expected usage in stderr, got: %q", stderr)
+	}
+	if !strings.Contains(stderr, "--parent") || !strings.Contains(stderr, "--child") || !strings.Contains(stderr, "--unlink") {
+		t.Fatalf("expected flags in stderr, got: %q", stderr)
+	}
+}
+
+func TestPrintIssueHelp_MentionsLinkAndInlineCreate(t *testing.T) {
+	stdout := captureOutput(t, &os.Stdout, func() {
+		printIssueHelp()
+	})
+
+	if !strings.Contains(stdout, "ghx issue <command>") {
+		t.Fatalf("expected issue usage in stdout, got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "Create an issue from a string") {
+		t.Fatalf("expected inline create help in stdout, got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "link:") {
+		t.Fatalf("expected link command help in stdout, got: %q", stdout)
+	}
+}
+
+func TestParseIssueFlags_SplitsBodyAndFlags(t *testing.T) {
+	body, flags := parseIssueFlags(" Body text --label bug --assignee @me")
+	if body != "Body text" {
+		t.Fatalf("expected body %q, got %q", "Body text", body)
+	}
+	wantFlags := []string{"--label", "bug", "--assignee", "@me"}
+	if strings.Join(flags, "|") != strings.Join(wantFlags, "|") {
+		t.Fatalf("expected flags %v, got %v", wantFlags, flags)
 	}
 }
